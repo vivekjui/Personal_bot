@@ -1,0 +1,184 @@
+"""
+Noting Bot - Main Orchestrator
+Entry point: starts the background scheduler, floating desktop widget, and the web dashboard.
+"""
+
+import sys
+import threading
+import schedule
+import time
+import webbrowser
+import atexit
+import os
+from pathlib import Path
+import waitress
+
+# --- Environment Check ---
+# Ensure we are running in the .venv/Python 3.12 to avoid 3.14 breaking pydantic/chromadb
+if "venv" not in sys.prefix.lower() and not sys.prefix.endswith(".venv"):
+    print("=" * 60)
+    print("[WARNING] You are running this bot outside of the virtual environment.")
+    print(f"Current Python: {sys.version.split()[0]}")
+    print("Please use 'start.bat' for a stable experience.")
+    print("=" * 60)
+    print()
+
+if sys.version_info >= (3, 13):
+    print("[CRITICAL] Python 3.14 detected. Some libraries like ChromaDB/Pydantic v1 may crash.")
+    print("Please use Python 3.12 if possible.")
+# Python 3.14 breaks pydantic v1 typing introspection on Optional/Union.
+# This prevents ChromaDB from crashing on import.
+try:
+    import pydantic.v1.fields
+    from typing import Any
+    _old_set = pydantic.v1.fields.ModelField._set_default_and_type
+    def _new_set(self):
+        try:
+            _old_set(self)
+        except pydantic.v1.errors.ConfigError:
+            self.type_ = Any
+            self.outer_type_ = Any
+    pydantic.v1.fields.ModelField._set_default_and_type = _new_set
+except Exception:
+    pass
+# --------------------------------------------------------
+
+# Ensure project root is in path
+sys.path.insert(0, str(Path(__file__).parent))
+
+from modules.utils import CONFIG, logger, find_free_port
+from modules.database import initialize_database
+
+def cleanup_resources():
+    """Release memory and shut down background processes on exit."""
+    print("\nShutting down Noting Bot / eOffice Assistant... Releasing memory and closing ports.")
+    try:
+        logger.info("Application shutting down, releasing resources.")
+        # Force garbage collection to free any lingering models/dataframes
+        import gc
+        gc.collect()
+    except Exception:
+        pass
+
+# Register the cleanup function to run right before the script dies
+atexit.register(cleanup_resources)
+
+
+def run_daily_jobs():
+    """Background scheduled tasks."""
+    logger.info("Daily jobs complete. (Noting bot has no active scheduled reminders)")
+
+
+def start_scheduler():
+    """Run the daily job scheduler in a background thread."""
+    schedule.every().day.at("09:00").do(run_daily_jobs)
+    logger.info("Scheduler started.")
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
+
+
+def start_dashboard():
+    """Start the Flask dashboard server."""
+    from dashboard import app
+    cfg = CONFIG["dashboard"]
+    logger.info(f"Starting Noting Bot Dashboard via Waitress at http://{cfg['host']}:{cfg['port']}")
+    waitress.serve(app, host=cfg["host"], port=cfg["port"], _quiet=True)
+
+
+def main():
+    print("=" * 60)
+    print("  Smart bot by Vivek Jui — Procurement Management Assistant")
+    print("=" * 60)
+    print()
+
+    # Prevent multiple instances by checking if the port is already bound
+    # If bound, attempt to forcefully terminate the ghost process holding it
+    import socket
+    import subprocess
+    import re
+    
+    cfg = CONFIG["dashboard"]
+    target_port = cfg["port"]
+    
+    # Check if port is available
+    final_port = find_free_port(target_port)
+    
+    if final_port != target_port:
+        # If we had to shift, double check if it was specifically port 5006
+        if final_port == 5006:
+            final_port = find_free_port(5007)
+        
+        print(f"Note: Port {target_port} was busy. Shifting to {final_port}...")
+        logger.info(f"Port shift: {target_port} -> {final_port}")
+        # Update config in memory for this session
+        CONFIG["dashboard"]["port"] = final_port
+
+    # Initialize database
+    initialize_database()
+    logger.info("Database initialized.")
+
+    # Run startup checks
+    run_daily_jobs()
+
+    # Start scheduler in background thread
+    scheduler_thread = threading.Thread(target=start_scheduler, daemon=True)
+    scheduler_thread.start()
+
+    # Start floating desktop widget (after short delay so Flask can bind port first)
+    def _launch_widget():
+        time.sleep(2.0)   # wait for Flask to be ready
+        from modules.utils import CONFIG
+        if not CONFIG["dashboard"].get("enable_widget", False):
+            logger.info("Floating widget is disabled in settings. Skipping launch.")
+            return
+
+        try:
+            from modules.floating_widget import start_floating_widget
+            start_floating_widget()
+        except Exception as e:
+            logger.warning(f"Floating widget skipped: {e}")
+
+    widget_thread = threading.Thread(target=_launch_widget, daemon=True)
+    widget_thread.start()
+
+    # Start background folder watcher (auto-ingest any files dropped into auto_ingest/)
+    def _launch_watcher():
+        time.sleep(3.0)
+        try:
+            from modules.rag_engine import start_folder_watcher
+            start_folder_watcher(interval_sec=60)
+        except Exception as e:
+            logger.warning(f"Folder watcher skipped: {e}")
+
+    watcher_thread = threading.Thread(target=_launch_watcher, daemon=True)
+    watcher_thread.start()
+
+    # Start dashboard in a background thread
+    dashboard_thread = threading.Thread(target=start_dashboard, daemon=True)
+    dashboard_thread.start()
+
+    # Launch Standalone App Window (pywebview)
+    import webview
+    
+    # Wait longer for Flask to bind (especially on slower systems or first run)
+    time.sleep(3.0)
+    
+    url = f"http://127.0.0.1:{CONFIG['dashboard']['port']}"
+    logger.info(f"Opening standalone window at {url}")
+    
+    # Create the window
+    window = webview.create_window(
+        'Smart bot by Vivek Jui', 
+        url, 
+        width=1280, 
+        height=850,
+        min_size=(1000, 700)
+    )
+    
+    # Start the webview loop (blocks the main thread)
+    webview.start()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,51 @@
+{
+  "gemini_api_key": "YOUR_GEMINI_API_KEY_HERE",
+  "paths": {
+    "cases_dir": "Cases",
+    "templates_dir": "templates",
+    "criteria_file": "criteria/bid_evaluation_criteria.json",
+    "database": "cases.db",
+    "logs": "logs"
+  },
+  "reminders": {
+    "emd_alert_days_before": 30,
+    "ps_alert_days_before": 30,
+    "completion_alert_days_before": 15,
+    "dlp_alert_days_before": 15
+  },
+  "portals": {
+    "gem": "https://gem.gov.in",
+    "cppp": "https://eprocure.gov.in"
+  },
+  "dashboard": {
+    "host": "127.0.0.1",
+    "port": 5006,
+    "enable_widget": false,
+    "debug": false
+  },
+  "llm": {
+    "provider": "gemma3_27b",
+    "gemini_model": "gemini-2.5-flash",
+    "temperature": 0.3,
+    "context_length": 8192,
+    "timeout_seconds": 120,
+    "noting_master_prompt": "You are an expert assistant for Indian government procurement files.\nDraft an official noting in Hindi by default.\nConvert Hinglish into proper official Hindi.\nIf any sentence is in English, convert it to Hindi unless the source content must stay as-is.\nUse the available reference context and writing style examples when helpful.\n\nAdditional Context:\n{additional_context}\n\nReference Context:\n{rag_context}\n\nPreferred Style Examples:\n{user_style_examples}\n\nReturn only the final noting text.\n",
+    "qa_system_prompt": "You are an intelligent Assistant for the APMD (Administrative & Procurement Management Department).\nYour task is to answer the user's question using the provided Knowledge Base context.\n\nANSWER PATTERN (strictly follow this order):\n1. GFR 2017: Relevant clause and description (if found in context).\n2. Manual for Procurement of Goods: Relevant clause and description (if found in context).\n3. GeM ATC (Additional Terms & Conditions): Relevant clause and description (if found in context).\n4. GSI Manual: Relevant clause and description (if found in context).\n5. Web Search Result / Supplemental Info: Provide relevant external or supplemental info.\n6. Advisory: Provide a practical advisory or recommendation for the user.\n\nCONSTRAINTS:\n- No Assumptions: If a clause is not found in the context for a specific category, state \"Not found in provided documents\" for that category.\n- Accuracy: Use only the provided context.\n- Tone: Formal and official.\n\n{learning_context}\n\n=== KNOWLEDGE BASE CONTEXT ===\n{context}\n==============================\n\nUser Question: {prompt}\n\nProvide a helpful, precise answer following the pattern above.\n"
+  },
+  "rag": {
+    "enabled": true,
+    "chunk_size": 800,
+    "chunk_overlap": 150,
+    "top_k_results": 5,
+    "min_relevance_pct": 40,
+    "kb_dir": "knowledge_base",
+    "embedding_model": "all-MiniLM-L6-v2"
+  },
+  "network": {
+    "proxy_mode": "manual",
+    "proxy_server": "http://10.6.0.9",
+    "proxy_port": "3128",
+    "proxy_username": "",
+    "proxy_password": ""
+  }
+}
