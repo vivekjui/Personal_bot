@@ -1,15 +1,12 @@
 """
 Noting Bot - Main Orchestrator
-Entry point: starts the background scheduler, floating desktop widget, and the web dashboard.
+Entry point: starts the web dashboard and standalone app window.
 """
 
 import sys
 import threading
-import schedule
 import time
-import webbrowser
 import atexit
-import os
 from pathlib import Path
 import waitress
 
@@ -47,7 +44,6 @@ except Exception:
 sys.path.insert(0, str(Path(__file__).parent))
 
 from modules.utils import CONFIG, logger, find_free_port
-from modules.database import initialize_database
 
 def cleanup_resources():
     """Release memory and shut down background processes on exit."""
@@ -64,20 +60,6 @@ def cleanup_resources():
 atexit.register(cleanup_resources)
 
 
-def run_daily_jobs():
-    """Background scheduled tasks."""
-    logger.info("Daily jobs complete. (Noting bot has no active scheduled reminders)")
-
-
-def start_scheduler():
-    """Run the daily job scheduler in a background thread."""
-    schedule.every().day.at("09:00").do(run_daily_jobs)
-    logger.info("Scheduler started.")
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
-
-
 def start_dashboard():
     """Start the Flask dashboard server."""
     from dashboard import app
@@ -92,12 +74,7 @@ def main():
     print("=" * 60)
     print()
 
-    # Prevent multiple instances by checking if the port is already bound
-    # If bound, attempt to forcefully terminate the ghost process holding it
-    import socket
-    import subprocess
-    import re
-    
+    # Prevent multiple instances by checking if the configured port is already bound.
     cfg = CONFIG["dashboard"]
     target_port = cfg["port"]
     
@@ -113,46 +90,6 @@ def main():
         logger.info(f"Port shift: {target_port} -> {final_port}")
         # Update config in memory for this session
         CONFIG["dashboard"]["port"] = final_port
-
-    # Initialize database
-    initialize_database()
-    logger.info("Database initialized.")
-
-    # Run startup checks
-    run_daily_jobs()
-
-    # Start scheduler in background thread
-    scheduler_thread = threading.Thread(target=start_scheduler, daemon=True)
-    scheduler_thread.start()
-
-    # Start floating desktop widget (after short delay so Flask can bind port first)
-    def _launch_widget():
-        time.sleep(2.0)   # wait for Flask to be ready
-        from modules.utils import CONFIG
-        if not CONFIG["dashboard"].get("enable_widget", False):
-            logger.info("Floating widget is disabled in settings. Skipping launch.")
-            return
-
-        try:
-            from modules.floating_widget import start_floating_widget
-            start_floating_widget()
-        except Exception as e:
-            logger.warning(f"Floating widget skipped: {e}")
-
-    widget_thread = threading.Thread(target=_launch_widget, daemon=True)
-    widget_thread.start()
-
-    # Start background folder watcher (auto-ingest any files dropped into auto_ingest/)
-    def _launch_watcher():
-        time.sleep(3.0)
-        try:
-            from modules.rag_engine import start_folder_watcher
-            start_folder_watcher(interval_sec=60)
-        except Exception as e:
-            logger.warning(f"Folder watcher skipped: {e}")
-
-    watcher_thread = threading.Thread(target=_launch_watcher, daemon=True)
-    watcher_thread.start()
 
     # Start dashboard in a background thread
     dashboard_thread = threading.Thread(target=start_dashboard, daemon=True)

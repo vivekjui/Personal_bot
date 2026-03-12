@@ -1,4 +1,4 @@
-# Personal Bot 
+# Personal Bot (formerly APMD Eoffice Bot)
 
 This repository contains a versatile desktop/web automation assistant built in
 Python with a Flask dashboard. Originally created for e‑office "notings",
@@ -53,9 +53,10 @@ pip install -r requirements.txt
 
 ## Getting Started
 
-1. Copy `config.example.json` to `config.json` and configure your local API keys and proxies.
-2. Run `python dashboard.py` to start the Flask server.
-3. Open `http://localhost:5000` in your browser or use the `start.bat` script.
+1. Run the app once. If no local config exists, it now bootstraps from `config.example.json` automatically into your user data folder.
+2. Configure your local API keys and proxies in the generated `config.json`.
+3. Run `python dashboard.py` to start the Flask server.
+4. Open `http://localhost:5000` in your browser or use the `start.bat` script.
 
 ## GitHub Repository
 

@@ -41,7 +41,8 @@ foreach ($dirName in $runtimeDirs) {
 }
 
 $runtimeFiles = Get-ChildItem -Path $ProjectRoot -File | Where-Object {
-    $runtimeFileExtensions -contains $_.Extension.ToLowerInvariant()
+    $runtimeFileExtensions -contains $_.Extension.ToLowerInvariant() -and
+    $_.Name -notin @("config.json", "cases.db")
 }
 
 foreach ($file in $runtimeFiles) {

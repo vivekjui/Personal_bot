@@ -458,6 +458,124 @@ def api_delete_library_by_stages():
         return jsonify({"error": str(e)}), 500
 
 
+# ====================================================
+# EMAIL DRAFTING MODULE ENDPOINTS
+# ====================================================
+
+@app.route("/api/email/categories", methods=["GET"])
+def api_get_email_categories():
+    """Return the current list of email categories."""
+    try:
+        from modules.eoffice_noting import load_email_categories
+        return jsonify(load_email_categories())
+    except Exception as e:
+        logger.error(f"Failed to fetch email categories: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/email/categories/update", methods=["POST"])
+def api_update_email_categories():
+    """Persist an updated list of email categories."""
+    cats = request.json
+    if not isinstance(cats, list):
+        return jsonify({"error": "List of categories required"}), 400
+    try:
+        from modules.eoffice_noting import save_email_categories
+        success = save_email_categories(cats)
+        return jsonify({"success": success})
+    except Exception as e:
+        logger.error(f"Error saving email categories: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# library routes mirror the noting library API but operate on email templates
+@app.route("/api/email/library", methods=["GET"])
+def api_get_email_library():
+    from modules.eoffice_noting import load_email_library
+    try:
+        return jsonify(load_email_library())
+    except Exception as e:
+        logger.error(f"Failed to load email library: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/email/library/add", methods=["POST"])
+def api_add_email_library():
+    d = request.json
+    stage = d.get("stage")
+    keyword = d.get("keyword")
+    text = d.get("text")
+    if not all([stage, keyword, text]):
+        return jsonify({"error": "Stage, Keyword and Text are required"}), 400
+    try:
+        from modules.eoffice_noting import add_library_email
+        success = add_library_email(stage, keyword, text)
+        return jsonify({"success": success})
+    except Exception as e:
+        logger.error(f"Email library add error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/email/library/update", methods=["POST"])
+def api_update_email_library():
+    d = request.json
+    eid = d.get("id")
+    if eid is None:
+        return jsonify({"error": "ID required"}), 400
+    updates = {}
+    if "text" in d: updates["text"] = d["text"]
+    if "keyword" in d: updates["keyword"] = d["keyword"]
+    try:
+        from modules.eoffice_noting import update_library_email
+        success = update_library_email(int(eid), updates)
+        return jsonify({"success": success})
+    except Exception as e:
+        logger.error(f"Email library update error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/email/library/move", methods=["POST"])
+def api_move_email_library():
+    d = request.json
+    eid = d.get("id")
+    new_stage = d.get("stage")
+    if eid is None or not new_stage:
+        return jsonify({"error": "ID and Stage are required"}), 400
+    try:
+        from modules.eoffice_noting import move_library_email
+        success = move_library_email(int(eid), new_stage)
+        return jsonify({"success": success})
+    except Exception as e:
+        logger.error(f"Email library move error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/email/library/delete/<int:eid>", methods=["DELETE"])
+def api_delete_email_library(eid):
+    try:
+        from modules.eoffice_noting import delete_library_email
+        success = delete_library_email(eid)
+        return jsonify({"success": success})
+    except Exception as e:
+        logger.error(f"Email library delete error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/email/library/delete-stages", methods=["POST"])
+def api_delete_email_library_by_categories():
+    cats = request.json
+    if not isinstance(cats, list):
+        return jsonify({"error": "List of categories required"}), 400
+    try:
+        from modules.eoffice_noting import delete_library_emails_by_categories
+        removed = delete_library_emails_by_categories(cats)
+        return jsonify({"success": True, "removed": removed})
+    except Exception as e:
+        logger.error(f"Error deleting email library by categories: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+
 @app.route("/api/noting/refine", methods=["POST"])
 def api_refine_noting():
     """Step 2: Refine and Translate edited noting."""

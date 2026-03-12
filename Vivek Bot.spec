@@ -10,7 +10,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('D:\\APMD_Eoffice_Bot\\templates_web', 'templates_web'), ('D:\\APMD_Eoffice_Bot\\static', 'static'), ('D:\\APMD_Eoffice_Bot\\knowledge_base', 'knowledge_base'), ('D:\\APMD_Eoffice_Bot\\cases.db', '.'), ('D:\\APMD_Eoffice_Bot\\config.json', '.'), ('D:\\APMD_Eoffice_Bot\\procurement_stages.json', '.'), ('D:\\APMD_Eoffice_Bot\\standard_library.json', '.')],
+    datas=[('D:\\APMD_Eoffice_Bot\\templates_web', 'templates_web'), ('D:\\APMD_Eoffice_Bot\\static', 'static'), ('D:\\APMD_Eoffice_Bot\\knowledge_base', 'knowledge_base'), ('D:\\APMD_Eoffice_Bot\\config.example.json', '.'), ('D:\\APMD_Eoffice_Bot\\procurement_stages.json', '.'), ('D:\\APMD_Eoffice_Bot\\standard_library.json', '.')],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

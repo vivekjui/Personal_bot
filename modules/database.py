@@ -8,13 +8,14 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from modules.utils import CONFIG, logger
+from modules.utils import CONFIG, DATA_ROOT, logger
 
-DB_PATH = CONFIG["paths"]["database"]
+DB_PATH = CONFIG.get("paths", {}).get("database") or str(DATA_ROOT / "cases.db")
 
 
 def get_connection():
     """Return a SQLite connection with row_factory for dict-like access."""
+    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     # Production optimization: increased timeout for concurrent access
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row

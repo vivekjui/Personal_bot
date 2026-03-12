@@ -34,6 +34,61 @@ BOT_ROOT = DATA_ROOT # For backward compatibility in other modules
 CONFIG_PATH = DATA_ROOT / "config.json"
 
 
+def _default_config() -> dict:
+    """Return a safe default configuration for first-run bootstrap."""
+    return {
+        "gemini_api_key": "",
+        "paths": {
+            "cases_dir": "Cases",
+            "templates_dir": "templates",
+            "criteria_file": "criteria/bid_evaluation_criteria.json",
+            "database": str(DATA_ROOT / "cases.db"),
+            "logs": str(DATA_ROOT / "logs"),
+        },
+        "reminders": {
+            "emd_alert_days_before": 30,
+            "ps_alert_days_before": 30,
+            "completion_alert_days_before": 15,
+            "dlp_alert_days_before": 15,
+        },
+        "portals": {
+            "gem": "https://gem.gov.in",
+            "cppp": "https://eprocure.gov.in",
+        },
+        "dashboard": {
+            "host": "127.0.0.1",
+            "port": 5006,
+            "enable_widget": False,
+            "debug": False,
+        },
+        "llm": {
+            "provider": "gemma3_27b",
+            "gemini_model": "gemini-2.5-flash",
+            "temperature": 0.3,
+            "context_length": 8192,
+            "timeout_seconds": 120,
+            "noting_master_prompt": DEFAULT_NOTING_MASTER_PROMPT,
+            "qa_system_prompt": DEFAULT_QA_SYSTEM_PROMPT,
+        },
+        "rag": {
+            "enabled": True,
+            "chunk_size": 800,
+            "chunk_overlap": 150,
+            "top_k_results": 5,
+            "min_relevance_pct": 40,
+            "kb_dir": str(DATA_ROOT / "knowledge_base"),
+            "embedding_model": "all-MiniLM-L6-v2",
+        },
+        "network": {
+            "proxy_mode": "manual",
+            "proxy_server": "http://10.6.0.9",
+            "proxy_port": "3128",
+            "proxy_username": "",
+            "proxy_password": "",
+        },
+    }
+
+
 def ensure_bundle_resource(rel_path: str) -> Path:
     """
     Copy a bundled file or directory into user-writable app storage on first run.
@@ -127,15 +182,75 @@ def load_config() -> dict:
     wrote_back = False
 
     if not CONFIG_PATH.exists():
-        bundle_config = BUNDLE_ROOT / "config.json"
-        if bundle_config.exists():
-            shutil.copy2(bundle_config, CONFIG_PATH)
-        else:
-            # Fallback for fresh initial install
-            return {"dashboard": {"host": "127.0.0.1", "port": 5000, "debug": False}, "paths": {"logs": "logs"}}
-    
+        bootstrap_candidates = [
+            BUNDLE_ROOT / "config.json",
+            BUNDLE_ROOT / "config.example.json",
+        ]
+        copied = False
+        for candidate in bootstrap_candidates:
+            if candidate.exists():
+                shutil.copy2(candidate, CONFIG_PATH)
+                copied = True
+                break
+        if not copied:
+            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(_default_config(), f, indent=2)
+
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         cfg = json.load(f)
+
+    if not isinstance(cfg, dict):
+        cfg = _default_config()
+        wrote_back = True
+
+    cfg.setdefault("gemini_api_key", "")
+
+    paths = cfg.setdefault("paths", {})
+    path_defaults = {
+        "cases_dir": "Cases",
+        "templates_dir": "templates",
+        "criteria_file": "criteria/bid_evaluation_criteria.json",
+        "database": str(DATA_ROOT / "cases.db"),
+        "logs": str(DATA_ROOT / "logs"),
+    }
+    for key, value in path_defaults.items():
+        if not paths.get(key):
+            paths[key] = value
+            wrote_back = True
+
+    dashboard = cfg.setdefault("dashboard", {})
+    dashboard_defaults = {
+        "host": "127.0.0.1",
+        "port": 5006,
+        "enable_widget": False,
+        "debug": False,
+    }
+    for key, value in dashboard_defaults.items():
+        if key not in dashboard:
+            dashboard[key] = value
+            wrote_back = True
+
+    reminders = cfg.setdefault("reminders", {})
+    reminder_defaults = {
+        "emd_alert_days_before": 30,
+        "ps_alert_days_before": 30,
+        "completion_alert_days_before": 15,
+        "dlp_alert_days_before": 15,
+    }
+    for key, value in reminder_defaults.items():
+        if key not in reminders:
+            reminders[key] = value
+            wrote_back = True
+
+    portals = cfg.setdefault("portals", {})
+    portal_defaults = {
+        "gem": "https://gem.gov.in",
+        "cppp": "https://eprocure.gov.in",
+    }
+    for key, value in portal_defaults.items():
+        if key not in portals:
+            portals[key] = value
+            wrote_back = True
 
     # ensure network defaults for proxy
     net = cfg.setdefault("network", {})
@@ -213,6 +328,16 @@ def load_config() -> dict:
         for key, val in cfg["paths"].items():
             if isinstance(val, str):
                 p = Path(val)
+                # Keep persistent runtime files in user data even if the template
+                # config uses relative placeholders from the repository.
+                if key == "database" and not p.is_absolute():
+                    cfg["paths"][key] = str(DATA_ROOT / p.name)
+                    wrote_back = True
+                    continue
+                if key == "logs" and not p.is_absolute():
+                    cfg["paths"][key] = str(DATA_ROOT / p.name)
+                    wrote_back = True
+                    continue
                 # If path is absolute and doesn't exist, OR it contains the old dev folder name
                 if (p.is_absolute() and not p.exists()) or "APMD_eOffice_Bot" in val:
                     basename = p.name
@@ -226,8 +351,26 @@ def load_config() -> dict:
     if "rag" in cfg and "kb_dir" in cfg["rag"]:
         val = cfg["rag"]["kb_dir"]
         p = Path(val)
-        if (p.is_absolute() and not p.exists()) or "APMD_eOffice_Bot" in val:
+        if not p.is_absolute():
+            cfg["rag"]["kb_dir"] = str(DATA_ROOT / p.name)
+            wrote_back = True
+        elif (p.is_absolute() and not p.exists()) or "APMD_eOffice_Bot" in val:
             cfg["rag"]["kb_dir"] = str(DATA_ROOT / "knowledge_base")
+    else:
+        rag = cfg.setdefault("rag", {})
+        rag_defaults = {
+            "enabled": True,
+            "chunk_size": 800,
+            "chunk_overlap": 150,
+            "top_k_results": 5,
+            "min_relevance_pct": 40,
+            "kb_dir": str(DATA_ROOT / "knowledge_base"),
+            "embedding_model": "all-MiniLM-L6-v2",
+        }
+        for key, value in rag_defaults.items():
+            if key not in rag:
+                rag[key] = value
+                wrote_back = True
 
     # ── Database Migration ─────────────────────────────────────────────────────
     if "paths" in cfg and "database" in cfg["paths"]:

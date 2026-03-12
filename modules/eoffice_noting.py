@@ -10,6 +10,7 @@ Two-step flow:
 
 import os
 import re
+import json
 from difflib import SequenceMatcher
 from datetime import datetime
 from html import unescape
@@ -28,6 +29,10 @@ from modules.utils import (
     sanitize_filename,
     today_str,
 )
+
+# Paths used by the email drafting feature. Stored in the user's data directory.
+EMAIL_CATEGORIES_PATH = DATA_ROOT / "email_categories.json"
+EMAIL_LIBRARY_PATH = DATA_ROOT / "email_library.json"
 from modules.database import get_noting_learning_patterns, upsert_noting_learning_pattern
 
 
@@ -512,6 +517,175 @@ def get_procurement_stages() -> list:
     except Exception as e:
         logger.error(f"Error loading stages: {e}")
         return []
+
+
+# ---------------------------------------------------------------------------
+# Email drafting helpers
+# ---------------------------------------------------------------------------
+
+def load_email_categories() -> list:
+    """Return the list of email categories configured by the user."""
+    if not EMAIL_CATEGORIES_PATH.exists():
+        return []
+    try:
+        with open(EMAIL_CATEGORIES_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading email categories: {e}")
+        return []
+
+
+def save_email_categories(cats: list) -> bool:
+    """Persist the list of email categories to disk."""
+    try:
+        EMAIL_CATEGORIES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(EMAIL_CATEGORIES_PATH, "w", encoding="utf-8") as f:
+            json.dump(cats, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        logger.error(f"Error saving email categories: {e}")
+        return False
+
+
+def load_email_library() -> list:
+    """Load email templates from the JSON library file."""
+    if not EMAIL_LIBRARY_PATH.exists():
+        return []
+    try:
+        with open(EMAIL_LIBRARY_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading email library: {e}")
+        return []
+
+
+def save_email_library(data: list) -> bool:
+    """Save the email library list to disk."""
+    try:
+        EMAIL_LIBRARY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(EMAIL_LIBRARY_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        logger.error(f"Error saving email library: {e}")
+        return False
+
+
+def update_library_email(item_id: int, updates: dict) -> bool:
+    """Update fields of a specific email library entry."""
+    if not EMAIL_LIBRARY_PATH.exists():
+        return False
+    try:
+        with open(EMAIL_LIBRARY_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        updated = False
+        for item in data:
+            if item.get("id") == item_id:
+                for key, val in updates.items():
+                    item[key] = val
+                item["updated_at"] = datetime.now().isoformat()
+                item["is_custom"] = True
+                updated = True
+                break
+        if updated:
+            with open(EMAIL_LIBRARY_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return True
+    except Exception as e:
+        logger.error(f"Failed to update email library item: {e}")
+    return False
+
+
+def add_library_email(category: str, keyword: str, text: str) -> bool:
+    """Add a new template to the email library."""
+    existing = []
+    if EMAIL_LIBRARY_PATH.exists():
+        try:
+            with open(EMAIL_LIBRARY_PATH, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        except Exception as e:
+            logger.error(f"Error reading email library: {e}")
+            existing = []
+    try:
+        new_id = max([item.get("id", 0) for item in existing] + [0]) + 1
+        new_item = {
+            "id": new_id,
+            "stage": category,
+            "keyword": keyword,
+            "text": text,
+            "updated_at": datetime.now().isoformat(),
+            "is_custom": True,
+        }
+        existing.append(new_item)
+        with open(EMAIL_LIBRARY_PATH, "w", encoding="utf-8") as f:
+            json.dump(existing, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to add email library item: {e}")
+    return False
+
+
+def move_library_email(item_id: int, new_category: str) -> bool:
+    """Change the category of an email template."""
+    if not EMAIL_LIBRARY_PATH.exists():
+        return False
+    try:
+        with open(EMAIL_LIBRARY_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        moved = False
+        for item in data:
+            if item.get("id") == item_id:
+                item["stage"] = new_category
+                moved = True
+                break
+        if moved:
+            with open(EMAIL_LIBRARY_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return True
+    except Exception as e:
+        logger.error(f"Failed to move email library item: {e}")
+    return False
+
+
+def delete_library_email(item_id: int) -> bool:
+    """Remove an email template by its ID."""
+    if not EMAIL_LIBRARY_PATH.exists():
+        return False
+    try:
+        with open(EMAIL_LIBRARY_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        initial = len(data)
+        data = [it for it in data if it.get("id") != item_id]
+        if len(data) < initial:
+            with open(EMAIL_LIBRARY_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return True
+    except Exception as e:
+        logger.error(f"Failed to delete email library item: {e}")
+    return False
+
+
+def delete_library_emails_by_categories(categories: list) -> int:
+    """Bulk remove templates belonging to any of the given categories."""
+    if not categories:
+        return 0
+    if not EMAIL_LIBRARY_PATH.exists():
+        return 0
+    try:
+        with open(EMAIL_LIBRARY_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        initial = len(data)
+        data = [it for it in data if it.get("stage") not in categories]
+        removed = initial - len(data)
+        if removed > 0:
+            with open(EMAIL_LIBRARY_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        return removed
+    except Exception as e:
+        logger.error(f"Failed to bulk delete email templates: {e}")
+        return 0
+
+# -----------------------------------------------------
 
 def update_procurement_stages(stages_list: list) -> bool:
     """Save the updated list of procurement stages."""
