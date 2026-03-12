@@ -1,4 +1,4 @@
-# Personal Bot (formerly APMD Eoffice Bot)
+# Personal Bot
 
 This repository contains a versatile desktop/web automation assistant built in
 Python with a Flask dashboard. Originally created for e‑office "notings",
