@@ -526,21 +526,37 @@ def get_procurement_stages() -> list:
 def load_email_categories() -> list:
     """Return the list of email categories configured by the user."""
     if not EMAIL_CATEGORIES_PATH.exists():
-        return []
+        return ["General"]
     try:
         with open(EMAIL_CATEGORIES_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            if isinstance(data, list):
+                cleaned = [str(item).strip() for item in data if str(item).strip()]
+                return cleaned or ["General"]
     except Exception as e:
         logger.error(f"Error loading email categories: {e}")
-        return []
+    return ["General"]
 
 
 def save_email_categories(cats: list) -> bool:
     """Persist the list of email categories to disk."""
     try:
+        cleaned = []
+        seen = set()
+        for item in cats or []:
+            value = str(item).strip()
+            if not value:
+                continue
+            key = value.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(value)
+        if not cleaned:
+            cleaned = ["General"]
         EMAIL_CATEGORIES_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(EMAIL_CATEGORIES_PATH, "w", encoding="utf-8") as f:
-            json.dump(cats, f, ensure_ascii=False, indent=2)
+            json.dump(cleaned, f, ensure_ascii=False, indent=2)
         return True
     except Exception as e:
         logger.error(f"Error saving email categories: {e}")

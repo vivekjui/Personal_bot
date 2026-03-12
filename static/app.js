@@ -993,13 +993,33 @@ async function fetchEmailCategories() {
   try {
     const cats = await apiFetch("/api/email/categories");
     if (Array.isArray(cats)) {
-      EMAIL_CATEGORIES = cats;
+      EMAIL_CATEGORIES = cats.length ? cats : ["General"];
       return cats;
     }
   } catch (e) {
     console.error("Failed to fetch email categories:", e);
   }
-  return [];
+  EMAIL_CATEGORIES = ["General"];
+  return EMAIL_CATEGORIES;
+}
+
+function populateAddEmailCategorySelect(preferredCategory = "") {
+  const addCatSel = document.getElementById("add-email-category");
+  if (!addCatSel) return;
+  const categories = (EMAIL_CATEGORIES && EMAIL_CATEGORIES.length) ? EMAIL_CATEGORIES : ["General"];
+  const selectedValue =
+    preferredCategory && preferredCategory !== "ALL" && categories.includes(preferredCategory)
+      ? preferredCategory
+      : categories[0];
+  addCatSel.innerHTML = categories
+    .map(category => `<option value="${esc(category)}" ${category === selectedValue ? "selected" : ""}>${esc(category)}</option>`)
+    .join("");
+}
+
+async function openAddEmailModal() {
+  await fetchEmailCategories();
+  populateAddEmailCategorySelect(window.currentEmailCategory || "");
+  openModal("modal-add-email");
 }
 
 async function showManageEmailCategoriesModal() {
@@ -1043,6 +1063,7 @@ async function addNewEmailCategory() {
   if (res.success) {
     document.getElementById("new-email-cat-name").value = "";
     EMAIL_CATEGORIES = newList;
+    populateAddEmailCategorySelect(name);
     await showManageEmailCategoriesModal();
     await fetchEmailLibrary();
   }
@@ -1055,6 +1076,7 @@ async function moveEmailCategory(idx, dir) {
   const res = await apiFetch("/api/email/categories/update", "POST", newList);
   if (res.success) {
     EMAIL_CATEGORIES = newList;
+    populateAddEmailCategorySelect();
     await showManageEmailCategoriesModal();
     await fetchEmailLibrary();
   }
@@ -1297,7 +1319,7 @@ async function renderEmailLibraryStage(cat) {
 
   const addCatSel = document.getElementById("add-email-category");
   if (addCatSel && (addCatSel.options.length === 0 || addCatSel.options.length < EMAIL_CATEGORIES.length)) {
-    addCatSel.innerHTML = EMAIL_CATEGORIES.map(s => `<option value="${esc(s)}" ${s === cat ? 'selected' : ''}>${esc(s)}</option>`).join("");
+    populateAddEmailCategorySelect(cat);
   }
 
   resultsContainer.innerHTML = filtered.map(item => {
