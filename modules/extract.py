@@ -123,11 +123,11 @@ def extract_text_from_file(file_path: Path = None, image_bytes: bytes = None, me
             
             # Relax safety settings to prevent false-positive blocks
             safety_settings = [
-                types.SafetySetting(category="HATE_SPEECH", threshold="BLOCK_NONE"),
-                types.SafetySetting(category="HARASSMENT", threshold="BLOCK_NONE"),
-                types.SafetySetting(category="SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
-                types.SafetySetting(category="DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
-                types.SafetySetting(category="CIVIC_INTEGRITY", threshold="BLOCK_NONE"),
+                types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
+                types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
+                types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
+                types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
+                types.SafetySetting(category="HARM_CATEGORY_CIVIC_INTEGRITY", threshold="BLOCK_NONE"),
             ]
 
             # Using a slightly more robust calling pattern

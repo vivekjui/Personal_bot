@@ -711,9 +711,20 @@ def _ask_gemini_direct(prompt: str, override_model: str = None) -> str:
     model_name = _normalize_gemini_model_name(model_name)
     
     client = genai.Client(api_key=api_key)
+    
+    from google.genai import types
+    safety_settings = [
+        types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
+        types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
+        types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
+        types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
+        types.SafetySetting(category="HARM_CATEGORY_CIVIC_INTEGRITY", threshold="BLOCK_NONE"),
+    ]
+
     response = client.models.generate_content(
-        model=f"models/{model_name}", # Add 'models/' prefix for API
-        contents=prompt
+        model=f"models/{model_name}",
+        contents=prompt,
+        config=types.GenerateContentConfig(safety_settings=safety_settings)
     )
     try:
         if response.text:
