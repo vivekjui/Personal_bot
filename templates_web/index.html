@@ -1,0 +1,1499 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smart bot by Vivek Jui — Procurement Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css?v=3.0.0" />
+  <!-- Rich Text Editor: Quill 2.0 (Offline) -->
+  <link href="/static/quill.snow.css" rel="stylesheet" />
+  <script src="/static/quill.js"></script>
+  <!-- Table Module: quill-table-better (Offline) -->
+  <link href="/static/quill-table-better.css" rel="stylesheet" />
+  <script src="/static/quill-table-better.js"></script>
+  <script>
+    // Load theme before parsing body to prevent flash
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme !== 'dark') {
+      document.documentElement.classList.add('light-theme');
+    }
+  </script>
+</head>
+
+<body>
+
+  <!-- ────────────────── SIDEBAR ────────────────── -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <span class="brand-icon">⚙️</span>
+      <div>
+        <div class="brand-title">Smart bot</div>
+        <div class="brand-sub">by Vivek Jui</div>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a href="#" class="nav-item active" data-page="dashboard" onclick="showPage('dashboard',this)">
+        <span class="nav-icon">🏠</span> Dashboard
+      </a>
+      <a href="#" class="nav-item" data-page="noting" onclick="showPage('noting',this)">
+        <span class="nav-icon">📝</span> e-Office Noting
+      </a>
+      <a href="#" class="nav-item" data-page="email" onclick="showPage('email',this)">
+        <span class="nav-icon">📧</span> Email Drafting
+      </a>
+      <a href="#" class="nav-item" data-page="documents" onclick="showPage('documents',this)">
+        <span class="nav-icon">📁</span> PDF Tool
+      </a>
+      <a href="#" class="nav-item" data-page="bid" onclick="showPage('bid',this)">
+        <span class="nav-icon">📥</span> Bid Downloader
+      </a>
+      <a href="#" class="nav-item" data-page="knowhow" onclick="showPage('knowhow',this)">
+        <span class="nav-icon">📖</span> Know How (Q&A)
+      </a>
+      <a href="#" class="nav-item" data-page="tec" onclick="showPage('tec',this)">
+        <span class="nav-icon">✅</span> TEC Evaluation
+      </a>
+      <a href="#" class="nav-item" data-page="extract" onclick="showPage('extract',this)">
+        <span class="nav-icon">🔍</span> Extract and Summarize
+      </a>
+      <a href="#" class="nav-item" data-page="tender" onclick="showPage('tender',this)">
+        <span class="nav-icon">📊</span> Bid Scrutiny
+      </a>
+      <div class="nav-divider"></div>
+      <a href="#" class="nav-item" data-page="kb" onclick="showPage('kb',this)">
+        <span class="nav-icon">🧠</span> Knowledge Base
+      </a>
+      <a href="#" class="nav-item" data-page="ai" onclick="showPage('ai',this)">
+        <span class="nav-icon">⚙️</span> AI Settings
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="sidebar-date" id="sidebarDate"></div>
+      <div class="sidebar-time" id="sidebarTime"></div>
+    </div>
+  </aside>
+
+  <!-- ────────────────── MAIN CONTENT ────────────────── -->
+  <main class="main-content">
+
+    <!-- TOP BAR -->
+    <header class="topbar">
+      <div class="topbar-title" id="pageTitle">Dashboard</div>
+      <div class="topbar-actions">
+        <!-- Navigation Dropdown -->
+        <div class="dropdown" id="nav-dropdown-container" style="display:none">
+          <button class="btn btn-ghost" onclick="toggleNavDropdown()" title="Quick Navigation">
+            🚀 Jump to...
+          </button>
+          <div class="dropdown-menu" id="nav-dropdown-menu">
+            <a class="dropdown-item" onclick="showPage('noting')"><span class="nav-icon">📝</span> e-Office Noting</a>
+            <a class="dropdown-item" onclick="showPage('extract')"><span class="nav-icon">🔍</span> Extract and Summarize</a>
+            <a class="dropdown-item" onclick="showPage('email')"><span class="nav-icon">📧</span> AI Email Drafter</a>
+            <a class="dropdown-item" onclick="showPage('documents')"><span class="nav-icon">📁</span> PDF Tool</a>
+            <a class="dropdown-item" onclick="showPage('bid')"><span class="nav-icon">📥</span> Bid Downloader</a>
+            <a class="dropdown-item" onclick="showPage('knowhow')"><span class="nav-icon">📖</span> Know How (Q&A)</a>
+            <a class="dropdown-item" onclick="showPage('tec')"><span class="nav-icon">✅</span> TEC Evaluation</a>
+            <a class="dropdown-item" onclick="showPage('kb')"><span class="nav-icon">🧠</span> Knowledge Base</a>
+            <a class="dropdown-item" onclick="showPage('ai')"><span class="nav-icon">⚙️</span> AI Settings</a>
+          </div>
+        </div>
+
+        <button class="btn btn-ghost" id="back-to-dashboard" onclick="showPage('dashboard')" style="display:none">🏠
+          Back to Dashboard</button>
+        <button class="btn btn-ghost" onclick="toggleTheme()" title="Toggle Light/Dark Theme" id="themeToggleBtn">☀️
+          Light Mode</button>
+        <button class="btn btn-ghost" onclick="refreshApp()" title="Refresh app">🔄 Refresh</button>
+        
+        <div style="display:flex; align-items:center; gap:5px; background:var(--bg-hover); padding:2px 10px; border-radius:var(--radius-sm); border:1px solid var(--border)">
+          <span style="font-size:11px; font-weight:700; color:var(--text-muted); margin-right:5px">ZOOM:</span>
+          <button class="btn btn-ghost btn-xs" onclick="toggleAppZoom(-10)" title="Zoom Out">➖</button>
+          <span id="zoom-level-text" style="font-size:12px; font-weight:700; min-width:35px; text-align:center">100%</span>
+          <button class="btn btn-ghost btn-xs" onclick="toggleAppZoom(10)" title="Zoom In">➕</button>
+          <button class="btn btn-ghost btn-xs" onclick="toggleAppZoom(0)" title="Reset Zoom">🔄</button>
+        </div>
+
+        <div class="status-dot" id="statusDot" title="Bot active"></div>
+        <span class="status-label">Bot Active</span>
+      </div>
+    </header>
+
+    <!-- ── PAGE: DASHBOARD ── -->
+    <section class="page active" id="page-dashboard">
+      <!-- Stats Grid Removed -->
+
+      <div class="dashboard-grid">
+        <div class="card">
+          <div class="card-header">🚀 Hello! This is your specialized Smart bot developed by Vivek Jui </div>
+          <div class="card-body">
+            <p>I am purely based on python scripts, operate fully offline and can help you in PDF merging, PDF
+              Compression, writing draft Noting, Automated Technical Evaluation or
+              bulk bid Document download. AI bid evaluation, Review TEC Evaluation and other exciting features are on
+              the way...</p>
+          </div>
+        </div>
+
+        <!-- QUICK ACCESS GRID -->
+        <div class="quick-access-grid">
+
+          <div class="card clickable-card" onclick="showPage('noting', this)"
+             style="cursor:pointer; border-left: 4px solid #4285f4; position: relative;">
+            <div class="card-badge refining">Refining</div>
+            <div class="card-body" style="text-align: center; padding: 15px;">
+              <div style="font-size: 32px; margin-bottom: 8px;">📝</div>
+              <div style="font-weight: 600; font-size: 14px;">e-Office Noting</div>
+              <div class="card-desc">AI-powered draft noting for e-Office files.</div>
+            </div>
+          </div>
+
+          <div class="card clickable-card" onclick="showPage('extract', this)"
+             style="cursor:pointer; border-left: 4px solid #8b5cf6; position: relative;">
+            <div class="card-badge working">New</div>
+            <div class="card-body" style="text-align: center; padding: 15px;">
+              <div style="font-size: 32px; margin-bottom: 8px;">🔍</div>
+              <div style="font-weight: 600; font-size: 14px;">Extract and Summarize</div>
+              <div class="card-desc">Pdf and image to word extraction.</div>
+            </div>
+          </div>
+
+          <div class="card clickable-card" onclick="showPage('email', this)"
+             style="cursor:pointer; border-left: 4px solid #00bcd4; position: relative;">
+            <div class="card-badge working">New</div>
+            <div class="card-body" style="text-align: center; padding: 15px;">
+              <div style="font-size: 32px; margin-bottom: 8px;">📧</div>
+              <div style="font-weight: 600; font-size: 14px;">AI Email Drafter</div>
+              <div class="card-desc">Draft official correspondence in seconds.</div>
+            </div>
+          </div>
+
+          <div class="card clickable-card" onclick="showPage('documents', this)"
+             style="cursor:pointer; border-left: 4px solid #34a853; position: relative;">
+            <div class="card-badge working">Working</div>
+            <div class="card-body" style="text-align: center; padding: 15px;">
+              <div style="font-size: 32px; margin-bottom: 8px;">📁</div>
+              <div style="font-weight: 600; font-size: 14px;">PDF Tool</div>
+              <div class="card-desc">Merge multiple PDFs or compress for size.</div>
+            </div>
+          </div>
+
+          <div class="card clickable-card" onclick="showPage('bid', this)"
+             style="cursor:pointer; border-left: 4px solid #fbbc05; position: relative;">
+            <div class="card-badge beta">Beta</div>
+            <div class="card-body" style="text-align: center; padding: 15px;">
+              <div style="font-size: 32px; margin-bottom: 8px;">📥</div>
+              <div style="font-weight: 600; font-size: 14px;">Bid Downloader</div>
+              <div class="card-desc">Bulk download bid documents from GeM.</div>
+            </div>
+          </div>
+
+          <div class="card clickable-card" onclick="showPage('knowhow')"
+            style="cursor:pointer; border-left: 4px solid #ea4335; position: relative;">
+            <div class="card-badge adapting">Adapting</div>
+            <div class="card-body" style="text-align: center; padding: 15px;">
+              <div style="font-size: 32px; margin-bottom: 8px;">📖</div>
+              <div style="font-weight: 600; font-size: 14px;">Know How</div>
+              <div class="card-desc">Ask questions from your knowledge base.</div>
+            </div>
+          </div>
+
+          <div class="card clickable-card" onclick="showPage('tec')"
+            style="cursor:pointer; border-left: 4px solid #9c27b0; position: relative;">
+            <div class="card-badge working">Working</div>
+            <div class="card-body" style="text-align: center; padding: 15px;">
+              <div style="font-size: 32px; margin-bottom: 8px;">✅</div>
+              <div style="font-weight: 600; font-size: 14px;">TEC Evaluation</div>
+              <div class="card-desc">Automated technical evaluation of bids.</div>
+            </div>
+          </div>
+
+          <div class="card clickable-card" onclick="showPage('kb')"
+            style="cursor:pointer; border-left: 4px solid #ff9800; position: relative;">
+            <div class="card-badge growing">Growing</div>
+            <div class="card-body" style="text-align: center; padding: 15px;">
+              <div style="font-size: 32px; margin-bottom: 8px;">🧠</div>
+              <div style="font-weight: 600; font-size: 14px;">Knowledge Base</div>
+              <div class="card-desc">Teach me to learn</div>
+            </div>
+          </div>
+
+          <!-- NEW PLACEHOLDER CARDS -->
+          <div class="card" style="border-left: 4px solid #64748b; opacity: 0.85; position: relative;">
+            <div class="card-badge soon">Coming Soon</div>
+            <div class="card-body" style="text-align: center; padding: 15px;">
+              <div style="font-size: 32px; margin-bottom: 8px;">📊</div>
+              <div style="font-weight: 600; font-size: 14px;">Bid Scrutiny</div>
+              <div class="card-desc">Using smart AI</div>
+            </div>
+          </div>
+
+          <div class="card" style="border-left: 4px solid #64748b; opacity: 0.85; position: relative;">
+            <div class="card-badge soon">Coming Soon</div>
+            <div class="card-body" style="text-align: center; padding: 15px;">
+              <div style="font-size: 32px; margin-bottom: 8px;">🔍</div>
+              <div style="font-weight: 600; font-size: 14px;">Review TEC Evaluation</div>
+              <div class="card-desc">Using smart AI</div>
+            </div>
+          </div>
+
+          <div class="card" style="border-left: 4px solid #64748b; opacity: 0.85; position: relative;">
+            <div class="card-badge soon">Coming Soon</div>
+            <div class="card-body" style="text-align: center; padding: 15px;">
+              <div style="font-size: 32px; margin-bottom: 8px;">💸</div>
+              <div style="font-weight: 600; font-size: 14px;">Bill Processing</div>
+              <div class="card-desc">Using smart AI</div>
+            </div>
+          </div>
+
+          <div class="card" style="border-left: 4px solid #64748b; opacity: 0.85; position: relative;">
+            <div class="card-badge soon">Coming Soon</div>
+            <div class="card-body" style="text-align: center; padding: 15px;">
+              <div style="font-size: 32px; margin-bottom: 8px;">🖋️</div>
+              <div style="font-weight: 600; font-size: 14px;">Bid Creation</div>
+              <div class="card-desc">Using smart AI</div>
+            </div>
+          </div>
+
+          <div class="card clickable-card" onclick="showPage('ai')"
+            style="cursor:pointer; border-left: 4px solid #607d8b; position: relative;">
+            <div class="card-body" style="text-align: center; padding: 15px;">
+              <div style="font-size: 32px; margin-bottom: 8px;">⚙️</div>
+              <div style="font-weight: 600; font-size: 14px;">AI Settings</div>
+              <div class="card-desc">Configure AI models and preferences.</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ── PAGE: CASES REMOVED ── -->
+
+    <!-- ── PAGE: NOTING ── -->
+    <section class="page" id="page-noting">
+      <div class="split-layout">
+        <!-- LEFT PANEL: Stages -->
+        <div class="side-panel">
+          <div class="panel-header">
+            <span>Procurement Stages</span>
+            <button class="btn btn-ghost btn-xs" onclick="showManageStagesModal()" title="Manage Stages">⚙️</button>
+          </div>
+          <div class="panel-body" id="library-stage-list">
+            <!-- Dynamic Stages -->
+          </div>
+          <div style="padding:10px; border-top:1px solid var(--border)">
+            <button class="btn btn-primary btn-sm w-100" onclick="openModal('modal-add-noting')">➕ New Template</button>
+          </div>
+        </div>
+
+        <!-- MAIN PANEL: Library & Editor -->
+        <div class="main-panel">
+          <div class="main-panel-header">
+            <h4 style="margin:0; font-size:16px;">📚 E-Office Noting Library</h4>
+            <div style="position:relative; flex:1; max-width:400px">
+              <input type="text" id="library-search-input" class="form-control-sm" placeholder="Search Hindi/English..."
+                style="width:100%; height:32px; padding-right:30px"
+                onkeyup="if(event.key==='Enter') renderLibraryStage(window.currentLibraryStage)">
+              <span style="position:absolute; right:10px; top:8px; cursor:pointer" onclick="renderLibraryStage(window.currentLibraryStage)">🔍</span>
+            </div>
+            <select id="noting-lang-selector" class="form-control-sm" style="width:110px;">
+              <option value="hindi">🇮🇳 Hindi</option>
+              <option value="english">🇬🇧 English</option>
+            </select>
+          </div>
+          <div class="main-panel-content">
+             <!-- STEP 1 & 2: DRAFTING -->
+             <div id="noting-drafting-ui" style="margin-bottom:24px; background:var(--bg-hover); padding:15px; border-radius:8px; border:1px solid var(--border)">
+               <div id="noting-step-1" class="form-group" style="margin-bottom:15px">
+                 <label style="font-weight:600">Search Context (Firm Name, Contract No, etc. - Optional)</label>
+                 <input type="text" id="noting-context" class="form-control" placeholder="Firm Name or details to match...">
+                 <button class="btn btn-primary mt-2" onclick="directAIDraft()">🪄 Generate Draft from Template</button>
+               </div>
+               
+               <div id="noting-step-2" style="display:none; margin-top:15px">
+                 <label style="font-weight:600">Edit / Refine Template Draft</label>
+                 <div id="noting-template-editor" style="min-height:250px; background:white; color:black; border-radius:8px; margin-top:8px"></div>
+                 <div style="display:flex; gap:10px; margin-top:12px; align-items:center">
+                   <input type="text" id="noting-refine-context" class="form-control" placeholder="Specific changes (e.g. increase cost to...)" style="flex:1">
+                   <button class="btn btn-warning" id="noting-refine-btn" onclick="refineNotingAI()">✨ Refine AI</button>
+                 </div>
+               </div>
+               <div id="noting-status" class="result-box info" style="display:none; margin-top:12px"></div>
+             </div>
+
+             <!-- Library content stays here -->
+             <div id="library-results-container"></div>
+             
+             <!-- Result Section -->
+             <div id="noting-suggestion-section" style="display:none; margin-top:24px; border-top:3px solid var(--accent); padding-top:20px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+                  <span style="font-weight:700; color:var(--accent); font-size:15px">🖊️ AI Refined Official Noting</span>
+                  <div style="display:flex; gap:8px">
+                    <button class="btn btn-ghost btn-xs" onclick="cleanLineSpacing('noting-editor-container')">↔ Remove Line Space</button>
+                    <button class="btn btn-ghost btn-xs" onclick="openProEditor('noting-editor-container')">🖋️ Fullscreen Pro</button>
+                  </div>
+                </div>
+                <div id="noting-editor-container" style="min-height:500px; background:white; color:black; border-radius:12px; border:2px solid var(--accent)"></div>
+                <div style="display:flex; gap:10px; margin-top:16px">
+                  <button class="btn btn-success" onclick="saveRefinedToLibrary()">⭐ Save to Library</button>
+                </div>
+                <div id="noting-save-result" class="result-box" style="display:none; margin-top:16px"></div>
+             </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── PAGE: EMAIL DRAFTING ── -->
+    <section class="page" id="page-email">
+      <div class="split-layout">
+        <div class="side-panel">
+          <div class="panel-header">
+            <span>Email Categories</span>
+            <button class="btn btn-ghost btn-xs" onclick="openModal('modal-manage-email-categories')" title="Manage Categories">⚙️</button>
+          </div>
+
+          <div class="panel-body" id="email-category-list">
+             <!-- Dynamic Categories -->
+          </div>
+          <div style="padding:10px; border-top:1px solid var(--border)">
+             <button class="btn btn-primary btn-sm w-100" onclick="openModal('modal-add-email')">➕ New Template</button>
+          </div>
+        </div>
+        <div class="main-panel">
+           <div class="main-panel-header">
+             <h4 style="margin:0; font-size:16px;">📧 Official Email Library</h4>
+             <div style="position:relative; flex:1; max-width:400px">
+                <input type="text" id="email-library-search" class="form-control-sm" placeholder="Search Hindi/English..." style="width:100%; height:32px; padding-right:30px">
+                <span style="position:absolute; right:10px; top:8px; cursor:pointer">🔍</span>
+             </div>
+             <select id="email-lang-selector" class="form-control-sm" style="width:110px;">
+                <option value="Hindi">🇮🇳 Hindi</option>
+                <option value="English">🇬🇧 English</option>
+             </select>
+           </div>
+           <div class="main-panel-content">
+              <div id="email-library-results"></div>
+              
+              <!-- STEP 1 & 2: DRAFTING -->
+              <div id="email-drafting-ui" style="margin-bottom:24px; background:var(--bg-hover); padding:15px; border-radius:8px; border:1px solid var(--border)">
+                <div id="email-step-1" class="form-group" style="margin-bottom:15px">
+                  <label style="font-weight:600">Search Context (Firm Name or Subject - Optional)</label>
+                  <input type="text" id="email-library-search" class="form-control" placeholder="Search context or enter subject...">
+                  <button class="btn btn-primary mt-2" onclick="directEmailDraft()">🪄 Generate Email from Template</button>
+                </div>
+                
+                <div id="email-step-2" style="display:none; margin-top:15px">
+                  <label style="font-weight:600">Edit / Refine Email Template</label>
+                  <div id="email-template-editor" style="min-height:250px; background:white; color:black; border-radius:8px; margin-top:8px"></div>
+                  <div style="display:flex; gap:10px; margin-top:12px; align-items:center">
+                    <input type="text" id="email-refine-context" class="form-control" placeholder="Specific changes (e.g. change deadline to...)" style="flex:1">
+                    <button class="btn btn-warning" id="email-refine-btn" onclick="refineEmailAI()">✨ Refine Email AI</button>
+                  </div>
+                </div>
+                <div id="email-status" class="result-box info" style="display:none; margin-top:12px"></div>
+              </div>
+
+              <!-- Result Section -->
+              <div id="email-suggestion-section" style="display:none; margin-top:24px; border-top:3px solid var(--info); padding-top:20px;">
+                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+                   <span style="font-weight:700; color:var(--info); font-size:15px">🖊️ AI Refined Official Email</span>
+                   <div style="display:flex; gap:8px">
+                     <button class="btn btn-ghost btn-xs" onclick="cleanLineSpacing('email-editor-container')">↔ Remove Line Space</button>
+                     <button class="btn btn-ghost btn-xs" onclick="openProEditor('email-editor-container')">🖋️ Fullscreen Pro</button>
+                   </div>
+                 </div>
+                 <div id="email-editor-container" style="min-height:450px; background:white; color:black; border-radius:12px; border:2px solid var(--info)"></div>
+                 <div style="display:flex; gap:10px; margin-top:16px">
+                    <button class="btn btn-success" onclick="saveEmailToLibrary()">⭐ Save to Library</button>
+                 </div>
+                 <div id="email-save-result" class="result-box" style="display:none; margin-top:16px"></div>
+              </div>
+           </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── PAGE: DOCUMENTS (GeM PROCESSOR / PDF TOOLS) ── -->
+    <section class="page" id="page-documents">
+      <div class="card">
+        <div class="card-header">📁 PDF & ZIP Document Processor</div>
+        <div class="card-body">
+          <p class="text-muted" style="margin-bottom: 24px;">
+            Extract and organize documents from GeM Bid zip files or local folders.
+            The bot auto-sorts files and maintains original structures.
+          </p>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 24px;">
+            <!-- Option A: ZIP Files -->
+            <div class="card" style="border: 1px solid var(--border); background: rgba(255,255,255,0.01);">
+              <div class="card-header" style="background: rgba(66, 133, 244, 0.05);">📦 Option A: Multiple ZIP Files</div>
+              <div class="card-body">
+                <p class="text-muted" style="font-size: 12px; margin-bottom: 16px;">
+                  Extract main PDFs from one or more zip files. Best for newly downloaded bids.
+                </p>
+                <div class="form-group" style="margin-bottom: 16px;">
+                  <label>Select Zip Files</label>
+                  <input type="file" id="pdf-zip-input" class="form-control" accept=".zip" multiple />
+                </div>
+                <button class="btn btn-primary w-100" onclick="processMultipleZips()">🚀 Start ZIP Processing</button>
+              </div>
+            </div>
+
+            <!-- Option B: Local Folder -->
+            <div class="card" style="border: 1px solid var(--border); background: rgba(255,255,255,0.01);">
+              <div class="card-header" style="background: rgba(16, 185, 129, 0.05);">📁 Option B: Local Folder (In-Place)</div>
+              <div class="card-body">
+                <p class="text-muted" style="font-size: 12px; margin-bottom: 16px;">
+                  Provide a folder path. The bot will find and process all ZIPs/PDFs inside.
+                </p>
+                <div class="form-group" style="margin-bottom: 16px;">
+                  <label>Folder Path</label>
+                  <div style="display:flex; gap:8px">
+                    <input type="text" id="zip-folder-path" class="form-control"
+                      placeholder="C:\Users\Downloads\Bids" />
+                    <button class="btn btn-ghost" onclick="browseFolder('zip-folder-path')">Browse</button>
+                  </div>
+                </div>
+                <button class="btn btn-primary w-100" onclick="processLocalFolder()">📂 Process Local Folder</button>
+                <button class="btn btn-ghost btn-sm w-100" onclick="openOutputFolder()" id="btn-open-folder"
+                  style="display:none; margin-top:12px">📂 Open Results Folder</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="zip-process-result" class="result-box" style="display:none;margin-top:24px"></div>
+        </div>
+      </div>
+
+      <div class="card mt-4">
+        <div class="card-header">📄 PDF Tools (Merge & Compress)</div>
+        <div class="card-body">
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <div style="border-right: 1px solid var(--border); padding-right: 20px;">
+              <h4 style="margin-bottom:10px; color:var(--accent)">1. Merge Multiple PDFs</h4>
+              <p class="text-muted" style="font-size:12px">Combine multiple PDF files into one. Saved to <b>Desktop</b>.</p>
+              <div class="form-group">
+                <label>Choose PDF Files (Multiple)</label>
+                <input type="file" id="merge-pdf-files" class="form-control" multiple accept=".pdf"
+                  onchange="handleMergeFileSelect(this)" />
+              </div>
+              <div id="merge-queue-container" style="margin-top: 15px; display: none;">
+                <p style="font-size: 12px; font-weight: 600; margin-bottom: 8px; color: var(--accent);">Selected Sequence:</p>
+                <div id="merge-file-list" style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 5px; background: var(--bg-dark);"></div>
+              </div>
+              <button class="btn btn-primary btn-lg w-100" style="margin-top: 15px; border-radius: 12px; box-shadow: 0 4px 12px rgba(66, 133, 244, 0.3);" onclick="mergePdfsUI()">🔗 Merge & Create Official PDF</button>
+            </div>
+
+            <div>
+              <h4 style="margin-bottom:10px; color:var(--accent)">2. Compress PDF</h4>
+              <p class="text-muted" style="font-size:12px">Reduce PDF file size. Saved to <b>Desktop</b>.</p>
+              <div class="form-group">
+                <label>Choose PDF File</label>
+                <input type="file" id="compress-pdf-file" class="form-control" accept=".pdf" />
+              </div>
+              <div class="form-group">
+                <label>Compression Mode</label>
+                <select id="compress-mode" class="form-control">
+                  <option value="medium">Standard Compression (Best for Quality)</option>
+                  <option value="heavy">Heavy Compression (Aim < 19.9 MB)</option>
+                  <option value="maximum">Maximum Optimization (Heaviest Pass)</option>
+                </select>
+              </div>
+              <button class="btn btn-primary" onclick="compressPdfUI()">📉 Compress PDF</button>
+            </div>
+          </div>
+          <div id="pdf-tools-result" class="result-box" style="display:none;margin-top:20px"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── PAGE: BID DOWNLOADER ── -->
+    <section class="page" id="page-bid">
+      <div class="card">
+        <div class="card-header">📥 GeM Bid Downloader</div>
+        <div class="card-body">
+          <div class="advisory-box" style="margin-bottom: 20px; padding: 12px; background: rgba(52, 168, 83, 0.05); border-left: 4px solid #34a853; border-radius: 4px; font-size: 13px;">
+            <p><strong>Compare Methods:</strong> Test which automation engine correctly identifies and clicks the <b>Verify Document</b> button.</p>
+          </div>
+          
+          <div class="form-grid" style="grid-template-columns: 2fr 1fr; gap: 16px;">
+            <div class="form-group">
+              <label>GeM Bid Page URL (optional)</label>
+              <input type="text" id="bid-gem-url" class="form-control" placeholder="Paste GeM URL (optional)..." />
+            </div>
+            <div class="form-group" style="display:flex; align-items:flex-end; gap: 10px;">
+              <button class="btn btn-secondary" type="button" onclick="openBidPageInChrome()">Open Debug Chrome</button>
+            </div>
+          </div>
+
+          <div class="form-grid" style="grid-template-columns: 2fr 1fr 1fr; gap: 16px;">
+            <div class="form-group">
+              <label>Document Types to Download</label>
+              <input type="text" id="bid-doc-types" class="form-control" placeholder="Experience, Turnover, or all" />
+            </div>
+            <div class="form-group">
+              <label>Sr. No. From</label>
+              <input type="number" id="bid-si-from" class="form-control" placeholder="e.g. 1" />
+            </div>
+            <div class="form-group">
+              <label>Sr. No. To</label>
+              <input type="number" id="bid-si-to" class="form-control" placeholder="e.g. 25" />
+            </div>
+          </div>
+
+          <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top: 20px; border-top: 1px solid var(--border); padding-top: 20px;">
+            <label style="display:flex; gap:8px; align-items:center; font-size:13px; width:100%; margin-bottom:10px;">
+              <input type="checkbox" id="bid-download-all" />
+              <b>Download ALL Documents</b> (Inside GeM popup)
+            </label>
+            
+            <button class="btn btn-primary" id="bid-classic-start" onclick="startBidDownload('classic')" style="flex:1; min-width:180px;">⬇ 1. Classic (Selenium)</button>
+            <button class="btn btn-secondary" id="bid-drission-start" onclick="startBidDownload('drission')" style="flex:1; min-width:180px;">⬇ 2. Drission (Direct)</button>
+            <button class="btn" id="bid-v2-start" onclick="startBidDownloadV2()" style="flex:1; min-width:180px; background:#6c5ce7; border-color:#6c5ce7; color:white;">🚀 3. Agent (V2)</button>
+            
+            <button class="btn btn-danger btn-lg" id="bid-stop-btn" style="display:none; width:100%;" onclick="stopBidDownload()">🛑 Stop Execution</button>
+            <button class="btn btn-danger btn-lg" id="bid-v2-stop" style="display:none; width:100%;" onclick="stopBidDownloadV2()">🛑 Stop Agent</button>
+          </div>
+
+          <div id="bid-execute-status" class="result-box" style="display:none; margin-top:20px;"></div>
+
+          <div id="bid-progress-container" style="display:none; margin-top: 20px; background: var(--bg-hover); padding: 15px; border-radius: 8px; border: 1px solid var(--border);">
+            <div id="bid-stats-summary" style="margin-bottom: 10px; display: flex; gap: 18px; font-size: 14px; flex-wrap: wrap;"></div>
+            <div style="display:flex; justify-content:space-between; margin-bottom: 8px;">
+              <strong id="bid-progress-text" style="color: var(--accent);">Initializing...</strong>
+              <span id="bid-progress-pct" style="font-weight: bold;">0%</span>
+            </div>
+            <div style="width: 100%; height: 10px; background: var(--border); border-radius: 5px; overflow: hidden;">
+              <div id="bid-progress-bar" style="width: 0%; height: 100%; background: var(--success); transition: width 0.3s ease;"></div>
+            </div>
+            <div id="bid-live-log" style="margin-top: 10px; font-family: monospace; font-size: 12px; color: var(--text-muted); height: 80px; overflow-y: auto;"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="page" id="page-tec">
+      <div class="card">
+        <div class="card-header">✅ GeM Technical Evaluation Center</div>
+        <div class="card-body">
+          <div class="advisory-box"
+          style="margin-bottom: 25px; padding: 15px; background: rgba(59, 130, 246, 0.05); border-left: 4px solid var(--accent); border-radius: 4px; font-size: 13.5px; line-height: 1.6;">
+          <p style="margin-bottom: 10px; color: var(--accent); font-weight: 600;">⚠️ Courtesy Advisory</p>
+          <ul style="padding-left: 20px; color: var(--text-muted);">
+            <li>Please upload <strong>.docx</strong> files for optimal results, as PDF processing is currently in
+              refinement.</li>
+            <li>This bot is currently in its <strong>trial phase</strong> and performs best with a specific evaluation
+              format. If your document differs significantly, the extraction may not be 100% accurate.</li>
+          </ul>
+          <div style="margin-top: 12px;">
+            <p style="font-weight: 600; font-size: 12px; margin-bottom: 6px; color: var(--text);">Required Table Header
+              Format:</p>
+            <code
+              style="display: block; background: var(--bg-dark); padding: 8px; border-radius: 4px; font-size: 11px; color: var(--accent2); white-space: nowrap; overflow-x: auto; border: 1px solid var(--border);">
+                | SI No | Seller Name | Parameter-1 | Parameter-2 | Qualification Status |
+              </code>
+          </div>
+        </div>
+
+        <p class="text-muted" style="margin-bottom: 20px;">The Assistant_AI will auto-learn parameters from your report
+          and evaluate each firm. You may adjust the findings and criteria mapping before executing the automation
+          directly into the GeM portal.</p>
+
+        <div class="form-grid" style="grid-template-columns: 2fr 1fr;">
+          <div class="form-group">
+            <label>Evaluation Report (.pdf or .docx)</label>
+            <input type="file" id="tec-file" class="card-control" accept=".pdf,.docx" />
+          </div>
+          <div class="form-group" style="display:flex; align-items:flex-end;">
+            <button class="btn btn-primary" onclick="extractTecData()">📄 Extract & Analyze Data</button>
+          </div>
+        </div>
+
+        <div id="tec-status" class="result-box" style="display:none; margin-top:20px"></div>
+
+        <!-- Criteria Mapping Section (Phase 2) -->
+        <div id="tec-mapping-section" style="display:none; margin-top: 30px;">
+          <h4 style="color:var(--accent); margin-bottom: 15px;">1. Map Qualification Criteria</h4>
+          <p class="text-muted" style="margin-bottom: 15px;">Review the parameters detected. Specify words used for
+            qualification (e.g., "Yes", "Compliant") or disqualification (e.g., "No", "N").<br>
+            <strong>Advisory: In the absence of any input, the keywords specified as placeholders will be treated as
+              the default qualification/disqualification criteria.</strong>
+          </p>
+          <div class="table-responsive">
+            <table class="data-table" style="width:100%">
+              <thead>
+                <tr>
+                  <th>Parameter</th>
+                  <th style="width:30%">Values Found in Document</th>
+                  <th style="width:25%">Qualifying Keywords</th>
+                  <th style="width:25%">Disqualifying Keywords</th>
+                </tr>
+              </thead>
+              <tbody id="tec-mapping-tbody"></tbody>
+            </table>
+          </div>
+          <div style="margin-top: 20px; text-align: right;">
+            <button class="btn btn-primary btn-lg" onclick="generateFinalTecResults()">✔️ Confirm & Generate
+              Comments</button>
+          </div>
+        </div>
+
+        <!-- Interactive Table Section -->
+        <div id="tec-table-section" style="display:none; margin-top: 30px;">
+          <div id="tec-stats-summary"
+            style="margin-bottom: 20px; padding: 15px; background: var(--bg-hover); border: 1px solid var(--border); border-radius: 8px; display: flex; gap: 20px; font-size: 14px;">
+            <!-- Filled via JS -->
+          </div>
+
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 15px;">
+            <h4 style="color:var(--accent); margin:0;">2. Review & Edit Recommendations</h4>
+            <div style="display: flex; gap: 10px;">
+              <button type="button" class="btn btn-outline" style="border-color: #fbbc05; color: #fbbc05;"
+                onclick="launchChrome()">🌐 Launch Chrome (Debug Mode)</button>
+              <div style="display:flex; align-items:center; gap:8px; background:rgba(234,67,53,0.1); padding:6px 12px; border-radius:20px; border:1px solid rgba(234,67,53,0.2)">
+                <span style="font-size:12px; font-weight:600; color:#ea4335">🛡️ Direct Mode (Stealth)</span>
+                <label class="switch-sm">
+                  <input type="checkbox" id="tec-direct-mode">
+                  <span class="slider-sm round"></span>
+                </label>
+              </div>
+              <button type="button" id="tec-execute-btn" class="btn btn-primary btn-lg" onclick="executeTecBot()">🚀
+                Execute in GeM</button>
+              <button type="button" id="tec-stop-btn" class="btn btn-danger btn-lg"
+                style="display:none; background-color: #d93025; border-color: #d93025;" onclick="stopTecExecution()">🛑
+                Stop Execution</button>
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 15px;">
+            <label>GeM Evaluation Page URL (Optional, but recommended)</label>
+            <input type="text" id="gem-url" class="form-control"
+              placeholder="Translate this exact URL into the GeM portal (e.g. https://gem.gov.in/...)" />
+          </div>
+
+          <!-- Real-time Progress Tracking UI -->
+          <div id="tec-progress-container"
+            style="display:none; margin-bottom: 20px; background: var(--bg-hover); padding: 15px; border-radius: 8px; border: 1px solid var(--border);">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+              <strong id="tec-progress-text" style="color: var(--accent);">Initializing Automation...</strong>
+              <span id="tec-progress-pct" style="font-weight: bold;">0%</span>
+            </div>
+            <div style="width: 100%; height: 10px; background: var(--border); border-radius: 5px; overflow: hidden;">
+              <div id="tec-progress-bar"
+                style="width: 0%; height: 100%; background: var(--success); transition: width 0.3s ease;"></div>
+            </div>
+            <div id="tec-live-log"
+              style="margin-top: 10px; font-family: monospace; font-size: 12px; color: var(--text-muted); min-height: 100px; max-height: 200px; overflow-y: auto; background: var(--bg-dark); padding: 10px; border-radius: 4px; border: 1px solid var(--border);">
+              <!-- Streaming logs appear here -->
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table" id="tec-data-table"
+              style="width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0;">
+              <thead>
+                <tr>
+                  <th style="width: 40px; text-align:center; resize: horizontal; overflow: auto;">SI No.</th>
+                  <th
+                    style="width: 30%; word-wrap: break-word; white-space: normal; resize: horizontal; overflow: auto; position: relative;">
+                    Firm Name</th>
+                  <th style="width: 120px; resize: horizontal; overflow: auto;">Status</th>
+                  <th style="width: auto; resize: horizontal; overflow: auto;">Comment / Reason for Disqualification
+                  </th>
+                </tr>
+              </thead>
+              <tbody id="tec-tbody">
+                <!-- Data populated dynamically via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="tec-execute-status" class="result-box" style="display:none; margin-top:20px"></div>
+      </div> <!-- End Card Body -->
+    </div> <!-- End Card -->
+  </section>
+
+    <section class="page" id="page-knowhow">
+      <div class="knowhow-container"
+        style="display:grid; grid-template-columns: 1fr 300px; gap: 20px; height: calc(100vh - 150px);">
+        <!-- Main Q&A Area -->
+        <div class="card" style="display:flex; flex-direction:column; height:100%;">
+          <div class="card-header">📖 Know How — AI Q&A Assistant</div>
+          <div class="card-body" style="flex:1; display:flex; flex-direction:column; overflow:hidden;">
+            <p class="text-muted" style="margin-bottom:15px">Ask questions about Departmental Manuals, Circulars, or
+              SOPs. The answer is derived strictly from your Knowledge Base.</p>
+
+            <div id="knowhow-qa-display"
+              style="flex:1; overflow-y:auto; padding:15px; background:var(--bg-dark); border-radius:8px; border:1px solid var(--border); margin-bottom:20px;">
+              <div class="empty-state">
+                <div style="font-size:40px; margin-bottom:10px;">📖</div>
+                <h3>Ask a question to begin</h3>
+                <p>e.g., "What are the rules for EMD refund?" or "Provide summary of GFR Rule 144."</p>
+              </div>
+            </div>
+
+            <div class="form-group" style="display:flex; gap:10px; margin-bottom:0;">
+              <input type="text" id="knowhow-q" class="form-control" placeholder="Type your question here..."
+                onkeypress="if(event.key==='Enter') askKnowHow()" style="flex:1; font-size:16px; padding:12px;" />
+              <button class="btn btn-primary" onclick="askKnowHow()" id="knowhow-ask-btn" style="min-width:100px;">Ask
+                AI</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- History Sidebar -->
+        <div class="card" style="display:flex; flex-direction:column; height:100%;">
+          <div class="card-header">🕒 Q&A History</div>
+          <div class="card-body" id="knowhow-history" style="flex:1; overflow-y:auto; padding:10px;">
+            <div class="empty-state">No recent questions</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── PAGE: KNOWLEDGE BASE ── -->
+    <section class="page" id="page-kb">
+
+      <!-- Stats banner -->
+      <div class="kb-stats-bar">
+        <div class="kb-stat"><span id="kb-stat-docs">—</span><label>Documents Fed</label></div>
+        <div class="kb-stat"><span id="kb-stat-chunks">—</span><label>Knowledge Chunks</label></div>
+      </div>
+
+      <!-- Tab navigation -->
+      <div class="kb-tabs">
+        <button class="kb-tab active" onclick="showKBTab('docs',this)">📚 All Documents</button>
+        <button class="kb-tab" onclick="showKBTab('rag-status',this)">🧠 RAG Status</button>
+        <button class="kb-tab" onclick="showKBTab('upload',this)">📤 Upload &amp; Feed</button>
+      </div>
+
+      <!-- TAB: Upload -->
+      <div class="kb-tab-panel" id="kbtab-upload">
+        <div class="card">
+          <div class="card-body">
+            <p class="text-muted">Upload PDFs, Word docs, or text files — the bot will <strong>auto-learn</strong>
+              from manuals, guidelines, circulars, and past notings to improve all AI outputs.</p>
+            <div class="form-grid" style="grid-template-columns:2fr 1fr;">
+              <div class="form-group" style="grid-column:1 / -1">
+                <label>Select File(s)</label>
+                <input type="file" id="kb-files" class="form-control" multiple accept=".pdf,.docx,.doc,.txt,.md" />
+              </div>
+              <div class="form-group">
+                <label>Document Category</label>
+                <select id="kb-category" class="form-control"></select>
+              </div>
+              <div class="form-group">
+                <label>Description (optional)</label>
+                <input type="text" id="kb-desc" class="form-control" placeholder="e.g. GFR 2017 Chapter 5 — Works" />
+              </div>
+            </div>
+
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <button class="btn btn-primary btn-lg" onclick="uploadToKB()">🧠 Upload &amp; Ingest</button>
+              <button class="btn btn-ghost" onclick="loadKBStats()">🔄 Refresh Stats</button>
+            </div>
+            <div id="kb-upload-result" class="result-box" style="display:none;margin-top:12px"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB: RAG STATUS -->
+      <div class="kb-tab-panel" id="kbtab-rag-status">
+        <div class="card">
+          <div class="card-header">
+            🧠 The Bot has been RAG-fed with the following materials
+            <button class="btn btn-ghost btn-sm" onclick="loadRAGStatus()" style="margin-left:auto">🔄 Refresh</button>
+          </div>
+          <div class="card-body" id="rag-status-content">
+            <div class="empty-state">Loading RAG knowledge base status...</div>
+          </div>
+        </div>
+      </div>
+
+
+      <!-- TAB: All Documents -->
+      <div class="kb-tab-panel active" id="kbtab-docs">
+        <div class="card">
+          <div class="card-body">
+            <table class="data-table" id="kb-docs-table">
+              <thead>
+                <tr>
+                  <th>Filename</th>
+                  <th>Category</th>
+                  <th>Chunks</th>
+                  <th>Ingested</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="kb-docs-tbody">
+                <tr>
+                  <td colspan="5" class="empty-state">Loading...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+
+    <!-- ── PAGE: EXTRACT TEXT ── -->
+    <section class="page" id="page-extract">
+      <div class="horizontal-stack">
+        
+        <!-- Frame 1: Extraction -->
+        <div class="card">
+          <div class="card-header">📤 1. Extraction</div>
+          <div class="card-body">
+            <div class="form-group" style="margin-bottom:15px">
+              <label>Select File (PDF or Image)</label>
+              <input type="file" id="extract-file-input" class="form-control" accept=".pdf,.png,.jpg,.jpeg" onchange="previewExtractFile(event)" />
+            </div>
+            
+            <div style="display:flex; gap:10px; margin-bottom:15px">
+              <button class="btn btn-ghost w-100" id="btn-paste-clipboard" onclick="pasteFromClipboard()" style="border:1px dashed var(--border)">📋 Paste from Clipboard</button>
+              <button class="btn btn-ghost" onclick="clearExtractInput()" title="Clear selection">🗑️</button>
+            </div>
+
+            <div id="extract-preview-container" style="margin-top:15px; display:none; text-align:center; border: 1px dashed var(--border); border-radius:8px; padding:10px; background:rgba(0,0,0,0.02); margin-bottom:20px;">
+              <img id="extract-preview-img" style="max-width:100%; max-height:180px; border-radius:4px; box-shadow:0 4px 12px rgba(0,0,0,0.1)" />
+              <div id="extract-preview-filename" style="font-size:11px; margin-top:8px; color:var(--text-muted); word-break:break-all"></div>
+            </div>
+
+            <div class="form-group" style="margin-bottom:20px">
+              <label style="font-weight:600; color:var(--accent)">Extraction Method</label>
+              <div style="display:flex; gap:20px; margin-top:10px">
+                <label class="radio-label">
+                  <input type="radio" name="extract-method" value="standard"> 
+                  <span><b>Standard</b></span>
+                </label>
+                <label class="radio-label">
+                  <input type="radio" name="extract-method" value="vision" checked> 
+                  <span><b>Vision (AI)</b></span>
+                </label>
+              </div>
+            </div>
+
+            <button class="btn btn-primary btn-lg w-100" style="height:54px; font-weight:600; font-size:16px;" onclick="runTextExtraction()" id="btn-run-extract">🚀 Extract Raw Text</button>
+            
+            <div id="extract-status" class="result-box info" style="display:none; margin-top:20px; animation:fadeIn 0.3s"></div>
+          </div>
+        </div>
+
+        <!-- Frame 2: AI Analysis -->
+        <div class="card">
+          <div class="card-header">🤖 2. Summary / Analysis</div>
+          <div class="card-body">
+            <div class="form-group" style="margin-bottom:20px">
+              <label style="font-weight:600; color:var(--accent)">1. Input Text / File</label>
+              <textarea id="extract-ai-context" class="form-control" rows="4" placeholder="e.g., 'Summarize these minutes of meeting with key action items'..." style="resize: none; font-size:14px; background:rgba(255,255,255,0.5); margin-bottom:10px"></textarea>
+              
+              <div style="background:rgba(0,0,0,0.02); border:1px dashed var(--border); border-radius:8px; padding:10px;">
+                <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:5px">OR Upload File for Direct Summary:</label>
+                <input type="file" id="summary-file-input" class="form-control btn-xs" accept=".pdf,.png,.jpg,.jpeg" />
+              </div>
+            </div>
+
+            <div style="margin-bottom:20px">
+              <label style="font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:10px">Quick Analysis Templates</label>
+              <div id="quick-analysis-container" style="display:flex; flex-wrap:wrap; gap:8px">
+                <div class="empty-state" style="padding:5px; font-size:11px">Loading buttons...</div>
+              </div>
+            </div>
+
+            <button class="btn btn-accent btn-lg w-100" style="height:54px; font-weight:700; font-size:16px; background:linear-gradient(135deg, #8b5cf6, #6366f1); color:white; border:none;" onclick="runSmartProcess()" id="btn-run-smart">✨ Summarize with AI</button>
+
+            <div id="smart-status" class="result-box success" style="display:none; margin-top:20px; animation:fadeIn 0.3s"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- FULL WIDTH RESULT EDITOR (Visible after extraction/summarization) -->
+      <div id="extract-result-container" style="display:none; margin-top:24px; animation:slideUp 0.4s easeOut">
+        <div class="card" id="extract-result-card">
+          <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; align-items:center; gap:10px; cursor:pointer" onclick="toggleExtractResult()">
+              <span id="extract-result-toggle-icon">▼</span>
+              <span>🖊️ Edit & Format Result (RTF Preview)</span>
+            </div>
+            <div style="display:flex; gap:10px">
+              <button class="btn btn-ghost btn-xs" onclick="clearExtractResultText()"><span style="margin-right:4px">🗑️</span> Clear</button>
+              <button class="btn btn-ghost btn-xs" onclick="copyExtractResult()"><span style="margin-right:4px">📋</span> Copy</button>
+              <button class="btn btn-success btn-xs" onclick="downloadExtractAsDoc()"><span style="margin-right:4px">📥</span> Download Word (.docx)</button>
+            </div>
+          </div>
+
+          <div id="extract-quill-container" style="background:white; border-bottom-left-radius:12px; border-bottom-right-radius:12px; overflow:hidden;">
+            <div id="extract-quill-editor" style="min-height:400px; color:black; font-size:16px;"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── PAGE: AI SETTINGS ── -->
+    <section class="page" id="page-ai">
+
+      <!-- LLM Status Card -->
+      <div class="card" id="llm-status-card">
+        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; gap:15px">
+          <div style="display:flex; align-items:center; gap:12px">
+            <span style="font-weight:700">🤖 AI Engine Status</span>
+            <div id="header-backend-status" class="status-pill">
+              <span class="status-dot-sm"></span>
+              <span class="status-text">Backend: --</span>
+            </div>
+            <div id="header-cloud-status" class="status-pill">
+              <span class="status-dot-sm"></span>
+              <span class="status-text">Cloud: --</span>
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px">
+            <span style="font-size:11px; color:var(--text-muted)">v1.0.4</span>
+            <button class="btn btn-primary btn-xs" onclick="checkForUpdates()" id="btn-check-updates">📥 Update This Bot</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="llm-status-grid" id="llm-status-grid">
+            <div class="empty-state">Checking AI status...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- LLM Config Card -->
+      <div class="card mt-4">
+        <div class="card-header">⚙️ LLM Configuration</div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="form-group" style="grid-column:span 2">
+              <label>AI Model Provider</label>
+              <div style="display:flex; gap:10px">
+                <select id="llm-provider" class="form-control" style="flex:1">
+                  <option value="gemini">✨ Gemini (Primary)</option>
+                  <option value="groq">⚡ Groq (Grow Models)</option>
+                  <option value="gemini-1.5-flash">⚡ Gemini 1.5 Flash (Fast)</option>
+                  <option value="gemini-1.5-pro">🧠 Gemini 1.5 Pro (Powerful)</option>
+                  <option value="gemini-2.0-flash">🚀 Gemini 2.0 Flash (Latest)</option>
+                  <option value="gemini-2.0-flash-lite-preview-02-05">⚡ Gemini 2.0 Flash-Lite</option>
+                  <option value="gemma-2-27b-it">🤖 Gemma-2 27B (Efficient)</option>
+                  <option value="gemma3_27b">🤖 Gemma-3 27B (Llama-style)</option>
+                </select>
+                <button class="btn btn-ghost" onclick="showModelPicker()" title="Show Available Models">🔍 Models</button>
+              </div>
+            </div>
+            <div class="form-group" style="grid-column:span 2">
+              <label>Specific Model / Custom ID</label>
+              <input type="text" id="llm-model-id" class="form-control" placeholder="Automatically set from picker or enter manually" />
+            </div>
+            <div class="form-group" style="grid-column:span 2" id="gemini-key-group">
+              <div style="display:flex; justify-content:space-between; align-items:center">
+                <label>Gemini API Key</label>
+                <a href="https://aistudio.google.com/app/apikey" target="_blank"
+                  style="font-size:11px; color:var(--accent); text-decoration:none">🔑 Get your key</a>
+              </div>
+              <input type="password" id="llm-gemini-key" class="form-control" placeholder="Enter API Key (AIzaSy...)" />
+            </div>
+            <div class="form-group" style="grid-column:span 2; display:none" id="groq-key-group">
+              <div style="display:flex; justify-content:space-between; align-items:center">
+                <label>Groq (Grow) API Key</label>
+                <a href="https://console.groq.com/keys" target="_blank"
+                  style="font-size:11px; color:var(--accent); text-decoration:none">🔑 Get Groq key</a>
+              </div>
+              <input type="password" id="llm-groq-key" class="form-control" placeholder="Enter Groq Key (gsk_...)" />
+            </div>
+            <div class="form-group">
+              <label>Temperature</label>
+              <input type="number" id="llm-temp" class="form-control" value="0.3" step="0.1" min="0" max="2" />
+            </div>
+            <div class="form-group">
+              <label>Context Length</label>
+              <input type="number" id="llm-context" class="form-control" value="8192" />
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+            <button class="btn btn-primary" onclick="saveLLMConfig()">💾 Save &amp; Apply</button>
+            <button class="btn btn-ghost" onclick="loadLLMStatus()">🔄 Refresh Status</button>
+          </div>
+          <div id="llm-config-status" class="result-box" style="display:none;margin-top:12px"></div>
+        </div>
+      </div>
+
+      <!-- Master Prompts Card -->
+      <div class="card mt-4">
+        <div class="card-header">📜 AI Master Prompts</div>
+        <div class="card-body">
+          <p class="text-muted" style="font-size:12px; margin-bottom:15px">These prompts define the "brain" and behavior of the bot for each module. Use with caution.</p>
+          <div style="display:flex; flex-direction:column; gap:20px;">
+            
+            <!-- Noting Prompt -->
+            <details class="prompt-details">
+              <summary>
+                <span>Noting Master Prompt (Drafting & Translation)</span>
+                <div class="summary-actions">
+                  <button class="btn btn-ghost btn-xs" onclick="dropInDefaultPrompt('noting')">✨ Default</button>
+                  <span class="nav-icon">⌄</span>
+                </div>
+              </summary>
+              <textarea id="llm-noting-master-prompt" class="form-control" rows="12"></textarea>
+            </details>
+
+            <!-- Email Prompt -->
+            <details class="prompt-details">
+              <summary>
+                <span>Email Master Prompt (Communication)</span>
+                <div class="summary-actions">
+                  <button class="btn btn-ghost btn-xs" onclick="dropInDefaultPrompt('email')">✨ Default</button>
+                  <span class="nav-icon">⌄</span>
+                </div>
+              </summary>
+              <textarea id="llm-email-master-prompt" class="form-control" rows="12"></textarea>
+            </details>
+
+            <!-- KnowHow Prompt -->
+            <details class="prompt-details">
+              <summary>
+                <span>AI Q&A Assistant (KnowHow)</span>
+                <div class="summary-actions">
+                  <button class="btn btn-ghost btn-xs" onclick="dropInDefaultPrompt('knowhow')">✨ Default</button>
+                  <span class="nav-icon">⌄</span>
+                </div>
+              </summary>
+              <textarea id="llm-knowhow-master-prompt" class="form-control" rows="12"></textarea>
+            </details>
+
+            <!-- Summarization Prompt -->
+            <details class="prompt-details">
+              <summary>
+                <span>Summarization & Analysis Prompt</span>
+                <div class="summary-actions">
+                  <button class="btn btn-ghost btn-xs" onclick="dropInDefaultPrompt('summarization')">✨ Default</button>
+                  <span class="nav-icon">⌄</span>
+                </div>
+              </summary>
+              <textarea id="llm-summarization-master-prompt" class="form-control" rows="12"></textarea>
+            </details>
+
+          </div>
+          <div style="margin-top:20px">
+            <button class="btn btn-primary" onclick="saveLLMConfig()">💾 Save Master Prompts</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Analysis Customization Card -->
+      <div class="card mt-4">
+        <div class="card-header">⚡ Quick Analysis Buttons</div>
+        <div class="card-body">
+          <p class="text-muted" style="font-size:12px; margin-bottom:15px">Customize the buttons that appear in the Extract & Summarize page for one-click analysis.</p>
+          <div id="quick-analysis-buttons-config" style="display:flex; flex-direction:column; gap:12px">
+            <!-- Dynamic items go here -->
+          </div>
+          <div style="margin-top:20px; display:flex; gap:10px">
+            <button class="btn btn-ghost" onclick="addQuickAnalysisItem()">➕ Add New Button</button>
+            <button class="btn btn-primary" onclick="saveQuickAnalysisConfig()">💾 Save Button Config</button>
+          </div>
+        </div>
+      </div>
+      <div class="card mt-4">
+        <div class="card-header">🌐 Network & Proxy Settings</div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="form-group" style="grid-column:span 2">
+              <label>Proxy Mode</label>
+              <select id="network-proxy-mode" class="form-control" onchange="toggleProxyFields()">
+                <option value="off">Off (Direct Connection)</option>
+                <option value="system">Use System Proxy</option>
+                <option value="manual">Manual Configuration</option>
+              </select>
+            </div>
+            <div class="form-group manual-proxy-field" style="display:none">
+              <label>Proxy Server (IP/Host)</label>
+              <input type="text" id="network-proxy-server" class="form-control" placeholder="127.0.0.1" />
+            </div>
+            <div class="form-group manual-proxy-field" style="display:none">
+              <label>Port</label>
+              <input type="text" id="network-proxy-port" class="form-control" placeholder="8080" />
+            </div>
+            <div class="form-group manual-proxy-field" style="display:none">
+              <label>Proxy Username (Optional)</label>
+              <input type="text" id="network-proxy-user" class="form-control" />
+            </div>
+            <div class="form-group manual-proxy-field" style="display:none">
+              <label>Proxy Password (Optional)</label>
+              <input type="password" id="network-proxy-pass" class="form-control" />
+            </div>
+          </div>
+          <div style="margin-top:12px">
+            <button class="btn btn-primary" onclick="saveNetworkConfig()">💾 Save Network Settings</button>
+          </div>
+          <div id="network-config-status" class="result-box" style="display:none;margin-top:12px"></div>
+        </div>
+      </div>
+
+      <!-- Test Prompt Card -->
+      <div class="card mt-4">
+        <div class="card-header">🧪 Test AI Response</div>
+        <div class="card-body">
+          <div class="form-group">
+            <label>Test Prompt</label>
+              <textarea id="smart-input" class="form-control" rows="8"
+                placeholder="Paste text here or upload a file below..."></textarea>
+              <div class="form-group mt-2">
+                <input type="file" id="smart-file-input" class="form-control" accept=".pdf,.docx,.txt" />
+              </div>
+              <button class="btn btn-info w-100 mt-2" onclick="summarizeFile()">📄 Extract & Summarize File</button>
+          </div>
+          <button class="btn btn-primary" onclick="testLLM()">▶ Send Test Prompt</button>
+          <div id="llm-test-result" class="result-box" style="display:none;margin-top:12px"></div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ═══════════════════ MODALS ═══════════════════ -->
+
+  <!-- Add Case Modal -->
+  <div class="modal-overlay" id="modal-add-case" onclick="closeModalOutside(event,'modal-add-case')">
+    <div class="modal">
+      <div class="modal-header">➕ New Case <button class="modal-close" onclick="closeModal('modal-add-case')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group"><label>Case ID *</label>
+            <input type="text" id="ac-id" class="form-control" placeholder="e.g. CASE/2025-26/001" />
+          </div>
+          <div class="form-group"><label>Work Name *</label>
+            <input type="text" id="ac-name" class="form-control" />
+          </div>
+          <div class="form-group"><label>Department</label>
+            <input type="text" id="ac-dept" class="form-control" placeholder="e.g. GSI" />
+          </div>
+          <div class="form-group"><label>Estimated Cost (Lakhs)</label>
+            <input type="number" id="ac-cost" class="form-control" step="0.01" />
+          </div>
+          <div class="form-group"><label>NIT No.</label>
+            <input type="text" id="ac-nit" class="form-control" />
+          </div>
+          <div class="form-group"><label>NIT Date</label>
+            <input type="date" id="ac-nitdate" class="form-control" />
+          </div>
+          <div class="form-group"><label>Bid Due Date</label>
+            <input type="date" id="ac-biddue" class="form-control" />
+          </div>
+          <div class="form-group"><label>Portal</label>
+            <select id="ac-portal" class="form-control">
+              <option value="">Select Portal</option>
+              <option>GeM</option>
+              <option>CPPP</option>
+              <option>e-Procurement</option>
+              <option>Direct</option>
+            </select>
+          </div>
+          <div class="form-group" style="grid-column:span 2"><label>Portal URL</label>
+            <input type="url" id="ac-url" class="form-control" />
+          </div>
+          <div class="form-group"><label>Work Order Date</label>
+            <input type="date" id="ac-wo" class="form-control" />
+          </div>
+          <div class="form-group"><label>Completion Date</label>
+            <input type="date" id="ac-comp" class="form-control" />
+          </div>
+          <div class="form-group"><label>DLP End Date</label>
+            <input type="date" id="ac-dlp" class="form-control" />
+          </div>
+          <div class="form-group" style="grid-column:span 2"><label>Description</label>
+            <textarea id="ac-desc" class="form-control" rows="2"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal('modal-add-case')">Cancel</button>
+        <button class="btn btn-primary" onclick="submitAddCase()">Save Case</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add EMD Modal -->
+  <div class="modal-overlay" id="modal-add-emd" onclick="closeModalOutside(event,'modal-add-emd')">
+    <div class="modal">
+      <div class="modal-header">🔐 Add EMD / Performance Security <button class="modal-close"
+          onclick="closeModal('modal-add-emd')">✕</button></div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group"><label>Case</label>
+            <select id="emd-case" class="form-control"></select>
+          </div>
+          <div class="form-group"><label>Type</label>
+            <select id="emd-type" class="form-control">
+              <option value="EMD">EMD</option>
+              <option value="Performance Security">Performance Security</option>
+            </select>
+          </div>
+          <div class="form-group"><label>Contractor Name</label>
+            <input type="text" id="emd-contractor" class="form-control" />
+          </div>
+          <div class="form-group"><label>Instrument Type</label>
+            <select id="emd-inst-type" class="form-control">
+              <option>FDR</option>
+              <option>DD</option>
+              <option>BG</option>
+              <option>CDR</option>
+            </select>
+          </div>
+          <div class="form-group"><label>Instrument No.</label>
+            <input type="text" id="emd-inst-no" class="form-control" />
+          </div>
+          <div class="form-group"><label>Bank Name</label>
+            <input type="text" id="emd-bank" class="form-control" />
+          </div>
+          <div class="form-group"><label>Amount (₹)</label>
+            <input type="number" id="emd-amount" class="form-control" />
+          </div>
+          <div class="form-group"><label>Validity Date</label>
+            <input type="date" id="emd-validity" class="form-control" />
+          </div>
+          <div class="form-group" style="grid-column:span 2"><label>Notes</label>
+            <input type="text" id="emd-notes" class="form-control" />
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal('modal-add-emd')">Cancel</button>
+        <button class="btn btn-primary" onclick="submitAddEMD()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Pro Editor (Rich Text) -->
+  <div class="modal-overlay" id="modal-pro-editor" onclick="closeModalOutside(event, 'modal-pro-editor')">
+    <div class="modal" style="width:90vw; height:90vh; max-width:1200px">
+      <div class="modal-header">
+        <div style="display:flex; align-items:center; gap:10px">
+          <span style="font-size:24px">🖋️</span>
+          <h3>Pro Editor — Advanced Drafting</h3>
+        </div>
+        <button class="modal-close" onclick="closeModal('modal-pro-editor')">✕</button>
+      </div>
+      <div class="modal-body" style="padding:0; display:flex; flex-direction:column; overflow:hidden">
+        <div id="pro-editor-container" style="flex:1; font-size:16px; border:none; background:white; color:black"></div>
+      </div>
+      <div class="modal-footer" style="padding:10px 20px; background:var(--bg-dark); display:flex; gap:12px; align-items:center">
+        <button class="btn btn-ghost" onclick="proEditorAction('remove-space')">↔ Remove Line Space</button>
+        <div style="flex:1; display:flex; gap:8px">
+           <input type="text" id="pro-refine-context" class="form-control-sm" placeholder="Refinement details (e.g. change name to...)" style="flex:1; height:32px; font-size:12px; border:1px solid var(--border)">
+           <button class="btn btn-warning btn-sm" onclick="proEditorAction('refine')">✨ Refine AI</button>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="proEditorAction('copy')">📋 Copy</button>
+        <button class="btn btn-ghost" onclick="closeModal('modal-pro-editor')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Reminder Modal -->
+  <div class="modal-overlay" id="modal-add-reminder" onclick="closeModalOutside(event,'modal-add-reminder')">
+    <div class="modal">
+      <div class="modal-header">⏰ Add Reminder <button class="modal-close"
+          onclick="closeModal('modal-add-reminder')">✕</button></div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group"><label>Case (optional)</label>
+            <select id="rem-case" class="form-control">
+              <option value="">— General —</option>
+            </select>
+          </div>
+          <div class="form-group"><label>Event / Reminder Title</label>
+            <input type="text" id="rem-title" class="form-control" placeholder="e.g. Bid Submission Deadline" />
+          </div>
+          <div class="form-group"><label>Event Date</label>
+            <input type="date" id="rem-date" class="form-control" />
+          </div>
+          <div class="form-group"><label>Alert X Days Before</label>
+            <input type="number" id="rem-days" class="form-control" value="7" />
+          </div>
+          <div class="form-group" style="grid-column:span 2"><label>Description</label>
+            <textarea id="rem-desc" class="form-control" rows="2"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal('modal-add-reminder')">Cancel</button>
+        <button class="btn btn-primary" onclick="submitAddReminder()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast notification -->
+  <div id="toast" class="toast"></div>
+
+  <script src="/static/app.js?v=1.0.4"></script>
+
+  <script>
+    // --- Theme Toggle ---
+    function updateThemeButton() {
+      const btn = document.getElementById('themeToggleBtn');
+      if (!btn) return;
+      if (document.documentElement.classList.contains('light-theme')) {
+        btn.innerHTML = '🌙 Dark Mode';
+      } else {
+        btn.innerHTML = '☀️ Light Mode';
+      }
+    }
+
+    function toggleTheme() {
+      const isLight = document.documentElement.classList.toggle('light-theme');
+      localStorage.setItem('theme', isLight ? 'light' : 'dark');
+      updateThemeButton();
+    }
+
+    // Initialize button state on load
+    document.addEventListener("DOMContentLoaded", () => {
+      updateThemeButton();
+    });
+  </script>
+  <!-- Modal: Add New Noting -->
+  <div class="modal-overlay" id="modal-add-noting" onclick="closeModalOutside(event, 'modal-add-noting')">
+    <div class="modal" style="max-width:600px">
+      <div class="modal-header">
+        <h3>➕ Add New Noting Template</h3>
+        <button class="modal-close" onclick="closeModal('modal-add-noting')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Noting Keyword / Title</label>
+          <input type="text" id="add-noting-keyword" class="form-control"
+            placeholder="e.g. Laptop Sanction, Vehicle Repair..." />
+        </div>
+        <div class="form-group">
+          <label>Procurement Stage</label>
+          <select id="add-noting-stage" class="form-control">
+            <!-- Populated by JS -->
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Noting Content</label>
+          <textarea id="add-noting-text" class="form-control" style="min-height:300px; background:white; color:black; border:1px solid var(--border); border-radius:8px; resize:vertical;"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal('modal-add-noting')">Cancel</button>
+        <button class="btn btn-primary" onclick="submitNewNoting()">Save to Library</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Manage Stages -->
+  <div class="modal-overlay" id="modal-manage-stages" onclick="closeModalOutside(event, 'modal-manage-stages')">
+    <div class="modal" style="max-width:500px">
+      <div class="modal-header">
+        <h3>📂 Manage Procurement Stages</h3>
+        <button class="modal-close" onclick="closeModal('modal-manage-stages')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:flex; gap:10px; margin-bottom:15px">
+          <input type="text" id="new-stage-name" class="form-control" placeholder="New Stage Name..." />
+          <button class="btn btn-primary" onclick="addNewStage()">Add Stage</button>
+        </div>
+        <div id="manage-stages-list"
+          style="max-height:400px; overflow-y:auto; border:1px solid var(--border); border-radius:8px">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal('modal-manage-stages')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="modal-noting-history" onclick="closeModalOutside(event, 'modal-noting-history')">
+    <div class="modal" style="max-width:800px">
+      <div class="modal-header">
+        <h3 id="history-modal-title">🕰️ Noting History</h3>
+        <button class="modal-close" onclick="closeModal('modal-noting-history')">✕</button>
+      </div>
+      <div class="modal-body" id="noting-history-list" style="max-height: 500px; overflow-y: auto;">
+        <div class="empty-state">Loading history...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add New Email Template -->
+  <div class="modal-overlay" id="modal-add-email" onclick="closeModalOutside(event, 'modal-add-email')">
+    <div class="modal" style="max-width:600px">
+      <div class="modal-header">
+        <h3>➕ Add New Email Template</h3>
+        <button class="modal-close" onclick="closeModal('modal-add-email')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Email Title / Subject Keyword</label>
+          <input type="text" id="add-email-keyword" class="form-control" placeholder="e.g. Meeting Invitation, EMD Refund Update..." />
+        </div>
+        <div class="form-group">
+          <label>Email Category</label>
+          <select id="add-email-category" class="form-control">
+            <!-- Populated by JS -->
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Email Body</label>
+          <div id="add-email-text" style="min-height:300px; background:white; color:black; border:1px solid var(--border); border-radius:8px;"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal('modal-add-email')">Cancel</button>
+        <button class="btn btn-primary" onclick="submitNewEmail()">Save to Library</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Manage Email Categories -->
+  <div class="modal-overlay" id="modal-manage-email-categories" onclick="closeModalOutside(event, 'modal-manage-email-categories')">
+    <div class="modal" style="max-width:500px">
+      <div class="modal-header">
+        <h3>📂 Manage Email Categories</h3>
+        <button class="modal-close" onclick="closeModal('modal-manage-email-categories')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:flex; gap:10px; margin-bottom:15px">
+          <input type="text" id="new-email-category-name" class="form-control" placeholder="New Category Name..." />
+          <button class="btn btn-primary" onclick="addNewEmailCategory()">Add Category</button>
+        </div>
+        <div id="manage-email-categories-list" style="max-height:400px; overflow-y:auto; border:1px solid var(--border); border-radius:8px">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal('modal-manage-email-categories')">Close</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Modal: Model Picker -->
+  <div class="modal-overlay" id="modal-model-picker" onclick="closeModalOutside(event, 'modal-model-picker')">
+    <div class="modal" style="max-width:500px">
+      <div class="modal-header">
+        <h3>🤖 Available AI Models</h3>
+        <button class="modal-close" onclick="closeModal('modal-model-picker')">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted" style="font-size:12px; margin-bottom:15px">Select a model from your provider's available list.</p>
+        <div id="model-list-container" style="max-height:400px; overflow-y:auto; border:1px solid var(--border); border-radius:8px">
+          <div class="empty-state">Fetching models...</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal('modal-model-picker')">Close</button>
+      </div>
+    </div>
+  </div>
+
+</body>
+
+</html>

@@ -1,0 +1,91 @@
+{
+    "description": "Standard Bid Evaluation Criteria for Public Works Tender Scrutiny",
+    "eligibility_criteria": [
+        {
+            "id": "C01",
+            "name": "Annual Turnover",
+            "description": "Bidder's average annual financial turnover during last 3 years should be at least X times estimated cost",
+            "multiplier": 1.5,
+            "document_required": "Audited Balance Sheet / CA Certificate",
+            "mandatory": true
+        },
+        {
+            "id": "C02",
+            "name": "Similar Work Experience",
+            "description": "Should have completed at least one similar work of value >= 80% of estimated cost OR two works >= 50% in last 5 years",
+            "requirements": {
+                "single_work_percentage": 80,
+                "double_work_percentage": 50,
+                "years": 5
+            },
+            "document_required": "Work Completion Certificates from competent authority",
+            "mandatory": true
+        },
+        {
+            "id": "C03",
+            "name": "Valid Registration",
+            "description": "Bidder must be registered with appropriate authority (PWD, CPWD, Railways, etc.) in relevant category",
+            "document_required": "Registration Certificate",
+            "mandatory": true
+        },
+        {
+            "id": "C04",
+            "name": "EMD / Bid Security",
+            "description": "Earnest Money Deposit must be deposited in prescribed form (FDR/DD/BG) for required amount",
+            "document_required": "FDR / DD / Bank Guarantee",
+            "mandatory": true
+        },
+        {
+            "id": "C05",
+            "name": "Bid Validity",
+            "description": "Bid must be valid for minimum 120 days from date of opening",
+            "validity_days": 120,
+            "document_required": "Declaration in bid",
+            "mandatory": true
+        },
+        {
+            "id": "C06",
+            "name": "GST Registration",
+            "description": "Valid GST registration number must be provided",
+            "document_required": "GST Certificate",
+            "mandatory": true
+        },
+        {
+            "id": "C07",
+            "name": "PAN Card",
+            "description": "Valid PAN card of firm / proprietor / directors",
+            "document_required": "PAN Card copy",
+            "mandatory": true
+        },
+        {
+            "id": "C08",
+            "name": "Bid Submission Authority",
+            "description": "Person submitting bid must have authority (power of attorney if not proprietor)",
+            "document_required": "Power of Attorney if applicable",
+            "mandatory": false
+        },
+        {
+            "id": "C09",
+            "name": "Litigation History",
+            "description": "Bidder should not have any adverse litigation history or blacklisting",
+            "document_required": "Self-declaration / Affidavit",
+            "mandatory": false
+        },
+        {
+            "id": "C10",
+            "name": "Integrity Pact",
+            "description": "Signed integrity pact (if applicable for works above prescribed threshold)",
+            "document_required": "Signed Integrity Pact",
+            "mandatory": false
+        }
+    ],
+    "disqualification_triggers": [
+        "Not registered",
+        "EMD not deposited",
+        "Bid received after due date",
+        "Bid validity insufficient",
+        "Work not similar",
+        "Turnover insufficient",
+        "Blacklisted"
+    ]
+}

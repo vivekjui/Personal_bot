@@ -1,0 +1,59 @@
+{
+    "dictionary": [
+        {
+            "term": "GFR",
+            "definition": "General Financial Rules. A compilation of rules and orders of Government of India to be followed by all offices while dealing with matters involving public finances.",
+            "category": "Terminology"
+        },
+        {
+            "term": "GSI",
+            "definition": "Geological Survey of India. The premier geological organization in India, attached to the Ministry of Mines.",
+            "category": "Organization"
+        },
+        {
+            "term": "NIT",
+            "definition": "Notice Inviting Tender. A formal notification issued by a department to invite bids for goods or services.",
+            "category": "Abbreviation"
+        },
+        {
+            "term": "EMD",
+            "definition": "Earnest Money Deposit. A security deposit submitted by bidders along with their bid to ensure they don't withdraw it before the evaluation.",
+            "category": "Abbreviation"
+        },
+        {
+            "term": "TEC",
+            "definition": "Tender Evaluation Committee. A committee formed to technically and financially evaluate the bids received against an NIT.",
+            "category": "Abbreviation"
+        },
+        {
+            "term": "ATC",
+            "definition": "Additional Terms and Conditions. Specific conditions added to a GeM bid beyond the standard General Terms and Conditions (GTC).",
+            "category": "Terminology"
+        },
+        {
+            "term": "GeM",
+            "definition": "Government e-Marketplace. An online platform for public procurement in India.",
+            "category": "Abbreviation"
+        },
+        {
+            "term": "CPP",
+            "definition": "Central Public Procurement Portal. An alternative portal to GeM for publishing tenders.",
+            "category": "Abbreviation"
+        },
+        {
+            "term": "Proprietary Article Certificate (PAC)",
+            "definition": "A certificate issued when only one particular manufacturer's product is required for technical reasons, allowing for single-source procurement under GFR Rule 166.",
+            "category": "Document"
+        },
+        {
+            "term": "Limit of Financial Powers",
+            "definition": "The maximum monetary value up to which an official or authority can sanction expenditure as per the Delegation of Financial Powers Rules (DFPR).",
+            "category": "Policy"
+        },
+        {
+            "term": "GeM Availability Report",
+            "definition": "A mandatory report generated on GeM to check if a product is available on the portal before initiating procurement outside GeM.",
+            "category": "Process"
+        }
+    ]
+}

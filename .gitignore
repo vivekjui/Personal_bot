@@ -1,0 +1,65 @@
+# Python environment
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+ENV/
+
+# Databases & Dynamic Data
+cases.db
+knowledge_base/
+Cases/
+Generated_Bids/
+temp_compress/
+temp_merge/
+temp_tec/
+logs/
+*.log
+
+# Sensitive Configuration
+config.json
+
+# Local artifacts/zips
+*.zip
+*.docx
+*.xlsx
+.browser_profile/
+dist_package/
+installer/
+
+# OS/IDE junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Nuitka Build Artifacts
+main.build/
+main.dist/
+*.build/
+*.dist/
+nuitka-crash-report.xml
+nuitka_last_crash.xml
+build_active.log
+build_debug.log
+build_final.log
+build_realtime.log
+build_session.log
+full_build.log
+full_build_v2.log
+test_api.log
+test_final.log
+test_out.log
+test_out_v3.log
+test_out_v4.log
+test_out_v5.log
+compact_snapshot.txt
+snap.json
+temp/
+tmp/
+scratch/
+db/
+debug_db.py
+test_noting_api.py
+scripts/migrate_modular_dbs.py
