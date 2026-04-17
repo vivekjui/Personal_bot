@@ -4,7 +4,7 @@ All API routes for the web UI.
 """
 
 VERSION = "1.01"
-GITHUB_REPO = "vivekjui/personal_bot"
+GITHUB_REPO = "vivekjui/Personal_bot"
 GITHUB_REPO_LABEL = "Personal Bot"
 
 import os
