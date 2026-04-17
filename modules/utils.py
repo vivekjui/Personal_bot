@@ -238,9 +238,10 @@ GUIDELINES:
 1. Provide a structured, professional summary or analysis as per the user requirement.
 2. Maintain an official, government-standard tone.
 3. Highlight key dates, entities (firms, individuals), monetary amounts, and action items.
-4. If technical evaluation is involved, clearly list qualification status for each vendor.
-5. Use Markdown tables or bullet points for clarity.
-6. Provide the result in clean, well-formatted Rich Text (HTML).
+4. If technical evaluation is involved, CLEARLY use a Table to list qualification status for each vendor.
+5. Use HTML tags for formatting: <b>, <i>, <ul>, <li>, and <table>.
+6. For any tabular data (comparisons, lists of items with values, vendor status), you MUST use a <table> with <th> and <td> tags.
+7. Return ONLY the HTML content. Do not include ```html or any preamble.
 
 EXTRACTED TEXT:
 ---

@@ -116,7 +116,7 @@ def extract_text_from_file(file_path: Path = None, image_bytes: bytes = None, me
                 if file_path.suffix.lower() == ".pdf": mime_type = "application/pdf"
                 elif file_path.suffix.lower() in [".jpg", ".jpeg"]: mime_type = "image/jpeg"
 
-            prompt = "Transcribe all text from this document into a structured digital format. Preserve the structural layout using Markdown tables if needed. Return ONLY the extracted text content."
+            prompt = "Transcribe all text from this document into a structured digital format using HTML. Preserve the structural layout using <table> for tables, <b> for bold headers, and <ul> for lists. Return ONLY the HTML content without code blocks."
 
             logger.info(f"Extracting text via Vision LLM ({model_name})...")
             content_part = types.Part.from_bytes(data=file_bytes, mime_type=mime_type)

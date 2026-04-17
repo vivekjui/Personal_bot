@@ -274,9 +274,18 @@ document.addEventListener("DOMContentLoaded", () => {
         ['bold', 'italic', 'underline', 'strike'],
         [{ 'color': [] }, { 'background': [] }],
         [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+        ['table-better'],
         ['clean']
       ]
     };
+
+    if (isTableBetterAvailable() \u0026\u0026 !disableTableBetter) {
+      quillExtractModules['table-better'] = {
+        language: 'en_us',
+        menus: ['column', 'row', 'merge', 'unmerge', 'delete', 'copy', 'cut']
+      };
+    }
+
     window.extractQuill = new Quill('#extract-quill-editor', {
       theme: 'snow',
       modules: quillExtractModules
@@ -3312,7 +3321,8 @@ async function runTextExtraction() {
       document.getElementById("extract-result-container").style.display = "block";
       if (window.extractQuill) {
         window.extractQuill.setContents([]);
-        window.extractQuill.clipboard.dangerouslyPasteHTML(data.html || plainTextToHtml(data.text));
+        const cleanContent = cleanAiOutput(data.text);
+        window.extractQuill.clipboard.dangerouslyPasteHTML(data.html || plainTextToHtml(cleanContent));
       }
       toast("Text extracted successfully", "success");
     } else {
@@ -3382,7 +3392,8 @@ async function runSmartProcess() {
       // Update result editor
       if (window.extractQuill) {
         window.extractQuill.setContents([]);
-        const processedHtml = plainTextToHtml(res.processed_text);
+        const cleanContent = cleanAiOutput(res.processed_text);
+        const processedHtml = plainTextToHtml(cleanContent);
         window.extractQuill.clipboard.dangerouslyPasteHTML(processedHtml);
       }
       
@@ -3564,18 +3575,78 @@ async function pasteFromClipboard() {
 function plainTextToHtml(text) {
   if (!text) return "";
   
-  // Heuristic: If it looks like it already contains HTML tags (e.g., <table>, <p>, <strong>), 
+  // 1. Clean up AI formatting artifacts
+  text = cleanAiOutput(text);
+
+  // 2. Heuristic: If it looks like it already contains HTML tags (e.g., <table>, <p>, <strong>), 
   // return it as is to allow the editor to render it.
   const hasHtml = /<[a-z][\s\S]*>/i.test(text);
   if (hasHtml) {
     return text;
   }
 
-  // Fallback: Convert plain text with newlines to HTML paragraphs
+  // 3. Check for Markdown Tables
+  if (text.includes('|') \u0026\u0026 text.includes('--')) {
+    text = markdownTablesToHtml(text);
+    return text; // It now contains HTML
+  }
+
+  // 4. Fallback: Convert plain text with newlines to HTML paragraphs
   return text
     .split(/\n\n+/)
-    .map(para => `<p>${esc(para).replace(/\n/g, '<br>')}</p>`)
+    .map(para =\u003e `<p>${esc(para).replace(/\n/g, '<br>')}</p>`)
     .join('');
+}
+
+function cleanAiOutput(text) {
+  if (!text) return "";
+  // Strip code blocks like ```html ... ``` or ```markdown ... ```
+  text = text.replace(/^```(html|markdown)?\s*/i, '').replace(/\s*```$/i, '');
+  // Remove common AI preambles
+  text = text.replace(/^(Here is the|Sure, here is the|Okay, here is the|Below is the).*?:\s*/i, '');
+  return text.trim();
+}
+
+function markdownTablesToHtml(text) {
+  // Simple markdown table to HTML converter
+  const lines = text.split('\n');
+  let inTable = false;
+  let html = '';
+  let tableHtml = '';
+
+  lines.forEach(line =\u003e {
+    if (line.trim().startsWith('|') \u0026\u0026 line.trim().endsWith('|')) {
+      if (!inTable) {
+        inTable = true;
+        tableHtml = '<table border="1" style="border-collapse: collapse; width: 100%;"><tbody>';
+      }
+      
+      const cells = line.split('|').filter(c =\u003e c.trim() !== '' || line.indexOf('|' + c + '|') !== -1);
+      // Skip separator lines like |---|---|
+      if (line.includes('---')) return;
+
+      tableHtml += '<tr>';
+      cells.forEach(cell =\u003e {
+        tableHtml += `<td style="border: 1px solid #ccc; padding: 8px;">${esc(cell.trim())}</td>`;
+      });
+      tableHtml += '</tr>';
+    } else {
+      if (inTable) {
+        inTable = false;
+        tableHtml += '</tbody></table>';
+        html += tableHtml;
+        tableHtml = '';
+      }
+      html += `<p>${esc(line).replace(/\n/g, '<br>')}</p>`;
+    }
+  });
+
+  if (inTable) {
+    tableHtml += '</tbody></table>';
+    html += tableHtml;
+  }
+
+  return html;
 }
 
 
