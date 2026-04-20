@@ -69,7 +69,7 @@ def start_dashboard():
     from dashboard import app
     cfg = CONFIG["dashboard"]
     logger.info(f"Starting Noting Bot Dashboard via Waitress at http://{cfg['host']}:{cfg['port']}")
-    waitress.serve(app, host=cfg["host"], port=cfg["port"], _quiet=True)
+    waitress.serve(app, host=cfg["host"], port=cfg["port"], threads=10, _quiet=True)
 
 
 def main():

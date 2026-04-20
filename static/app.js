@@ -10,6 +10,8 @@ const API = "";  // Same origin
 // ─── GLOBAL STATE ─────────────────────────────────
 let allCases = [];
 let currentTecJobId = null; // TEC Execution Job State
+let currentTecAnalyzeJobId = null;
+let currentTecExtractJobId = null;
 let currentBidJobId = null; // Bid Downloader Job State
 let currentBidV2JobId = null; // Bid Downloader V2 Job State
 let currentBidV2EventSource = null;
@@ -153,6 +155,15 @@ function createQuillWithFallback(selector, quillModules) {
   }
 }
 
+function toggleSidePanel(btn) {
+  const panel = btn.closest('.split-layout').querySelector('.side-panel');
+  if (panel) {
+    const isCollapsed = panel.classList.toggle('collapsed');
+    btn.innerHTML = isCollapsed ? '📋' : '☰';
+    btn.title = isCollapsed ? 'Show Sidebar' : 'Hide Sidebar';
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   // Register Table Module
   if (isTableBetterAvailable()) {
@@ -167,11 +178,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  updateClock();
-  setInterval(updateClock, 1000);
+  startHealthCheck();
   loadDashboard();
   loadNotingTypes();
   fetchStages(); // Load procurement stages on startup to avoid empty state
+  loadLLMStatus(); // Load LLM keys and prompts on startup
   
   // Multiple Noting/Email Editors (Support for old and new containers)
   ['noting-editor-container', 'noting-template-editor', 'noting-editor', 'email-template-editor'].forEach(id => {
@@ -196,8 +207,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const q = createQuillWithFallback('#' + id, quillModules);
 
       // Robust Table Pasting Support
-      q.clipboard.addMatcher('TABLE', (node, delta) => {
-        return delta; // Allow tables through
+      ['TABLE', 'TBODY', 'TR', 'TD', 'TH'].forEach(tag => {
+        q.clipboard.addMatcher(tag, (node, delta) => delta);
       });
 
       if (id === 'noting-editor-container') window.notingQuill = q;
@@ -254,10 +265,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
     window.quill = createQuillWithFallback('#pro-editor-container', quillProModules);
 
-    // Support tables in Pro Editor clipboard
-    window.quill.clipboard.addMatcher('TABLE', (node, delta) => {
-      return delta;
-    });
+    // Support tables in Pro Editor clipboard and pasting
+    // We rely on quill-table-better to handle standard HTML tables.
+    // Explicitly allowing TABLE tags through without modification allows the module to intercept them.
+    window.quill.clipboard.addMatcher('TABLE', (node, delta) => delta);
+    window.quill.clipboard.addMatcher('TBODY', (node, delta) => delta);
+    window.quill.clipboard.addMatcher('TR', (node, delta) => delta);
+    window.quill.clipboard.addMatcher('TD', (node, delta) => delta);
+    window.quill.clipboard.addMatcher('TH', (node, delta) => delta);
 
     // Auto-save logic: pushes content back to the original draft/container
     window.quill.on('text-change', () => {
@@ -274,27 +289,30 @@ document.addEventListener("DOMContentLoaded", () => {
         ['bold', 'italic', 'underline', 'strike'],
         [{ 'color': [] }, { 'background': [] }],
         [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-        ['table-better'],
+        [{ 'align': [] }],
+        ['link'],
         ['clean']
       ]
     };
 
-    if (isTableBetterAvailable() \u0026\u0026 !disableTableBetter) {
-      quillExtractModules['table-better'] = {
-        language: 'en_us',
-        menus: ['column', 'row', 'merge', 'unmerge', 'delete', 'copy', 'cut']
-      };
-    }
-
-    window.extractQuill = new Quill('#extract-quill-editor', {
-      theme: 'snow',
-      modules: quillExtractModules
+    addTableBetterSupport(quillExtractModules, {
+        language: 'en_US',
+        toolbarTable: true,
+        menus: ['column', 'row', 'insert', 'merge', 'unmerge', 'deleteTable', 'style'],
+      }, () => {
+      quillExtractModules.toolbar.splice(quillExtractModules.toolbar.length - 1, 0, ['table-better']);
     });
+
+    window.extractQuill = createQuillWithFallback('#extract-quill-editor', quillExtractModules);
+
+    // Allow raw HTML tables through clipboard
+    window.extractQuill.clipboard.addMatcher('TABLE', (node, delta) => delta);
   }
 
   // Global Clipboard Listener for Images (for Extract Page)
   document.addEventListener('paste', handleGlobalPaste);
 
+  const lastPage = sessionStorage.getItem("activePage");
   if (lastPage && lastPage !== "dashboard") {
     showPage(lastPage);
   }
@@ -303,13 +321,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 
-function updateClock() {
-  const now = new Date();
-  document.getElementById("sidebarTime").textContent =
-    now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  document.getElementById("sidebarDate").textContent =
-    now.toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", year: "numeric" });
-}
+
 
 // ─── PAGE NAVIGATION ──────────────────────────────
 function showPage(pageId, el) {
@@ -325,12 +337,11 @@ function showPage(pageId, el) {
     return;
   }
 
-  // If el is not provided (e.g. from a dashboard card), find the sidebar item
-  if (!el) {
-    el = document.querySelector(`.nav-item[data-page="${pageId}"]`);
-  }
-  if (el) {
-    el.classList.add("active");
+  // Highlight navigation item in dropdown if applicable
+  const dropItem = document.querySelector(`.dropdown-item[onclick*="'${pageId}'"]`);
+  if (dropItem) {
+    document.querySelectorAll(".dropdown-item").forEach(d => d.classList.remove("active"));
+    dropItem.classList.add("active");
   }
 
   // Back to Dashboard button visibility
@@ -345,7 +356,7 @@ function showPage(pageId, el) {
 
   const titles = {
     dashboard: "Dashboard", cases: "Case Registry", noting: "e-Office Noting",
-    documents: "PDF & ZIP Tool", bid: "Bid Downloader", tender: "Bid Scrutiny",
+    "pdf-tools": "PDF & ZIP Tool", bid: "Bid Downloader", tender: "Bid Scrutiny",
     kb: "🧠 Knowledge Base", ai: "⚙️ AI Settings", tec: "TEC Evaluation",
     knowhow: "📖 Know How (Q&A)", extract: "🔍 Extract and Summarize"
   };
@@ -385,13 +396,22 @@ function toast(msg, type = "info") {
 }
 
 function refreshApp() {
-  sessionStorage.setItem(
-    "activePage",
-    document.querySelector(".nav-item.active")?.dataset?.page || "dashboard"
-  );
-  const refreshedUrl = new URL(window.location.href);
-  refreshedUrl.searchParams.set("_refresh", Date.now().toString());
-  window.location.replace(refreshedUrl.toString());
+  // Hard restart: Clear all state and start from scratch
+  const theme = localStorage.getItem('theme');
+  
+  // Clear everything
+  sessionStorage.clear();
+  localStorage.clear();
+  
+  // Restore only the theme to prevent blinding the user if they like dark mode
+  if (theme) localStorage.setItem('theme', theme);
+  
+  toast("Hard Restarting Application...", "info");
+  
+  setTimeout(() => {
+    // Redirect to root without any params, forcing a clean load
+    window.location.href = window.location.pathname + "?v=" + Date.now();
+  }, 800);
 }
 
 // ─── MODAL HELPERS ──────────────────────────────────
@@ -419,9 +439,55 @@ async function apiFetch(path, method = "GET", body = null) {
   return r.json();
 }
 
+function switchDocTab(tabId, el) {
+  document.querySelectorAll(".doc-tab-content").forEach(c => c.style.display = "none");
+  const target = document.getElementById("doc-tab-" + tabId);
+  if (target) {
+    target.style.display = "block";
+    // If it's the extraction tab, ensure Quill is resized/visible correctly
+    if (tabId === 'extraction' && window.extractQuill) {
+        setTimeout(() => window.extractQuill.update(), 10);
+    }
+  }
+  
+  // Update the pill UI
+  const docPage = document.getElementById('page-documents');
+  if (docPage) {
+    const pills = docPage.querySelectorAll(".tab-pill");
+    pills.forEach(p => p.classList.remove("active"));
+    if (el) {
+      el.classList.add("active");
+    } else {
+      pills.forEach(p => {
+        if (p.getAttribute('onclick').includes(`'${tabId}'`)) p.classList.add('active');
+      });
+    }
+  }
+}
+
 function loading(el) { el.innerHTML = `<div style="padding:20px;text-align:center"><span class="spinner"></span></div>`; }
 
 // ─── CASES REMOVED ───
+
+function startHealthCheck() {
+  setInterval(async () => {
+    try {
+      const res = await fetch("/api/admin/status");
+      if (!res.ok) throw new Error("Offline");
+      const statusIndicator = document.getElementById("system-status-indicator");
+      if (statusIndicator) {
+        statusIndicator.style.background = "#2ecc71";
+        statusIndicator.title = "System Online";
+      }
+    } catch (e) {
+      const statusIndicator = document.getElementById("system-status-indicator");
+      if (statusIndicator) {
+        statusIndicator.style.background = "#e74c3c";
+        statusIndicator.title = "System Unresponsive / Offline";
+      }
+    }
+  }, 5000);
+}
 
 // ─── DASHBOARD SUMMARY ─────────────────────────────
 async function loadDashboard() {
@@ -857,12 +923,14 @@ async function deleteNoting(id) {
 
 function copyTextDirect(btn) {
   const container = btn.closest(".library-textarea-wrapper");
-  const text = container.querySelector("textarea").value;
-  navigator.clipboard.writeText(text).then(() => {
+  // Cards use a contenteditable div, not a textarea
+  const editor = container.querySelector(".library-editor");
+  const text = editor ? (editor.innerText || editor.textContent || "") : "";
+  navigator.clipboard.writeText(text.trim()).then(() => {
     const original = btn.innerHTML;
     btn.innerHTML = "✅ Copied";
     setTimeout(() => { btn.innerHTML = original; }, 2000);
-  });
+  }).catch(() => toast("Could not copy to clipboard", "error"));
 }
 
 function copyNotingSimple(btn, elId) {
@@ -881,12 +949,19 @@ function copyNotingSimple(btn, elId) {
 
 async function refineLibraryTemplate(id, btn) {
   const card = btn.closest(".library-item-card");
+  if (!card) return toast("Card not found", "error");
+  
   const textarea = card.querySelector(".library-editor");
   const contextInput = document.getElementById(`refine-context-${id}`);
-  const context = contextInput.value.trim();
-  const originalText = textarea.value.trim();
+  const context = contextInput ? contextInput.value.trim() : "";
+  
+  // FIX: contenteditable divs use innerText, not value
+  const originalText = (textarea.innerText || textarea.textContent || "").trim();
+  const originalHtml = textarea.innerHTML;
 
-  // No context check required here as backend handles missing context now
+  if (!originalText) {
+    return toast("Please enter some text in the editor first", "warning");
+  }
 
   const originalBtnHtml = btn.innerHTML;
   btn.disabled = true;
@@ -895,16 +970,18 @@ async function refineLibraryTemplate(id, btn) {
   try {
     const res = await apiFetch('/api/noting/refine', 'POST', {
       text: originalText,
+      html: textarea.innerHTML || "",
       modifications: context,
-      target_lang: "hindi" // Defaulting to Hindi as per previous refinement logic
+      target_lang: "hindi"
     });
 
     if (res.success) {
+      const refinedContent = res.refined_html || res.refined_text || "";
       // Instead of updating current, ADD AS NEW entries as per user request
       const addRes = await apiFetch("/api/noting/library/add", "POST", {
         stage: card.querySelector("select").value || "General",
         keyword: card.querySelector(".library-keyword-editor").value + " (Refined)",
-        text: res.refined_text
+        text: refinedContent
       });
 
       if (addRes.success) {
@@ -1127,28 +1204,75 @@ function selectNotingTemplate(idx) {
   if (editor && typeof editor.focus === "function") editor.focus();
 }
 
-function autoGrowNotingTextarea(el) {
+function autoResizeTextarea(el) {
   if (!el || el.tagName !== "TEXTAREA") return;
   el.style.height = "auto";
   el.style.height = (el.scrollHeight) + "px";
 }
 
-async function refineNotingAI() {
-  const templateText = getEditorText("noting-template-editor");
-  const templateHtml = getEditorHtml("noting-template-editor");
-  const extraContext = document.getElementById("noting-refine-context").value.trim();
-  const langEl = document.getElementById("noting-lang-selector");
-  const targetLang = langEl ? langEl.value : "hindi";
+async function refineNotingAI(clickedBtn) {
+  console.log("Refining noting action triggered...");
+  
+  // 1. Determine Source Editor based on the clicked button or modal state
+  let sourceId = "noting-template-editor";
+  let isPro = false;
+  
+  if (document.getElementById("modal-pro-editor")?.classList.contains("open")) {
+    sourceId = "pro-editor-container";
+    isPro = true;
+  } else if (clickedBtn && clickedBtn.id === "noting-refine-btn") {
+    sourceId = "noting-template-editor";
+  } else if (clickedBtn && clickedBtn.id === "noting-bar-refine-btn") {
+    sourceId = "noting-editor-container";
+  } else {
+    // If no specific button ID, try to find context from the closest section
+    const section = clickedBtn ? clickedBtn.closest('.result-section, .draft-section') : null;
+    if (section && section.id === 'noting-suggestion-section') sourceId = "noting-editor-container";
+    else sourceId = "noting-template-editor";
+  }
 
-  if (!templateText) return toast("Please provide some text in the editor", "error");
+  const templateText = getEditorText(sourceId);
+  const templateHtml = getEditorHtml(sourceId);
+  
+  console.log(`Refining from source: ${sourceId}, Content Length: ${templateText.length}`);
+  
+  // Get modifications from the appropriate context box
+  let extraContext = "";
+  if (isPro) {
+    extraContext = document.getElementById("pro-refine-context").value.trim();
+  } else {
+    extraContext = document.getElementById("noting-refine-context").value.trim();
+  }
 
-  const status = document.getElementById("noting-status");
-  const refineBtn = document.getElementById("noting-refine-btn");
+  const targetLang = "hindi";
 
-  status.style.display = "block";
-  status.className = "result-box info";
-  status.innerHTML = `<span class="spinner"></span> Running Official GSI Refinement & Translation...`;
-  refineBtn.disabled = true;
+  if (!templateText) {
+    return toast("Please provide some text to refine", "error");
+  }
+
+  // Handle status and button state
+  const status = isPro ? null : document.getElementById("noting-status");
+  const refineBtn = clickedBtn || document.getElementById("noting-refine-btn");
+  const originalBtnHtml = refineBtn ? refineBtn.innerHTML : "";
+
+  if (status) {
+    status.style.display = "block";
+    status.className = "result-box info";
+    status.innerHTML = `<span class="spinner"></span> Running Official GSI Refinement & Translation...`;
+  }
+  
+  if (refineBtn) {
+    refineBtn.disabled = true;
+    refineBtn.classList.add("loading");
+    refineBtn.innerHTML = `<span class="spinner"></span> Refining...`;
+  }
+
+  // Show a toast as well if we're not in pro mode to ensure visibility
+  if (!isPro) {
+    toast("AI is refining your document...", "info");
+  } else {
+    toast("Refining draft via AI...", "info");
+  }
 
   try {
     const res = await apiFetch('/api/noting/refine', 'POST', {
@@ -1158,29 +1282,71 @@ async function refineNotingAI() {
       target_lang: targetLang,
       document_type: 'noting'
     });
-    status.style.display = "none";
-    refineBtn.disabled = false;
+    
+    if (status) status.style.display = "none";
+    if (refineBtn) {
+      refineBtn.disabled = false;
+      refineBtn.classList.remove("loading");
+    }
 
     if (res.success) {
-      setEditorContent("noting-editor-container", res.refined_html || res.refined_text || "");
-      document.getElementById("noting-suggestion-section").style.display = "block";
+      if (res.refined_text && res.refined_text.startsWith("[AI Error")) {
+          toast(res.refined_text, "error");
+          if (refineBtn) {
+            refineBtn.disabled = false;
+            refineBtn.classList.remove("loading");
+          }
+          return;
+      }
+
+      // Update the active editor
+      setEditorContent(sourceId, res.refined_html || res.refined_text || "");
+      
+      // If we are NOT in pro editor, update the result editor
+      if (!isPro && sourceId !== "noting-editor-container") {
+          setEditorContent("noting-editor-container", res.refined_html || res.refined_text || "");
+      }
+
+      if (!isPro) {
+        const suggestionSection = document.getElementById("noting-suggestion-section");
+        if (suggestionSection) {
+          suggestionSection.style.display = "block";
+          suggestionSection.scrollIntoView({ behavior: 'smooth' });
+        }
+      } else {
+          // Clear pro-editor instruction box after success
+          document.getElementById("pro-refine-context").value = "";
+      }
+      
       toast("Refined successfully!", "success");
-      document.getElementById("noting-suggestion-section").scrollIntoView({ behavior: 'smooth' });
     } else {
       toast(res.error || "Refinement failed", "error");
     }
   } catch (e) {
-    status.innerHTML = `<span style="color:var(--danger)">Error: ${e.message}</span>`;
-    refineBtn.disabled = false;
+    console.error("Refine AI Error:", e);
+    if (status) {
+      status.style.display = "block";
+      status.className = "result-box error";
+      status.innerHTML = `<span>Error: ${e.message}</span>`;
+    }
+    toast("Error: " + e.message, "error");
+  } finally {
+    if (refineBtn) {
+      refineBtn.disabled = false;
+      refineBtn.classList.remove("loading");
+      refineBtn.innerHTML = originalBtnHtml;
+    }
   }
 }
 
 function saveRefinedToLibrary() {
   const text = getEditorText("noting-editor-container");
   if (!text) return toast("Nothing to save", "error");
+  const html = getEditorHtml("noting-editor-container");
+  const content = /<table\b/i.test(html || "") ? html : text;
 
   // Populate the "Add New" modal with the refined text
-  document.getElementById("add-noting-text").value = text;
+  document.getElementById("add-noting-text").value = content;
   const context = document.getElementById("noting-library-search")?.value || "";
   document.getElementById("add-noting-keyword").value = "AI Refined - " + (context.substring(0, 30) || "Untilted");
 
@@ -1230,7 +1396,11 @@ async function processZip() {
       throw new Error(`Upload failed (${r.status}). ${text.substring(0, 100)}`);
     }
     const res = await r.json();
-    handleZipProcessResponse(res, el);
+    if (res.job_id) {
+       pollZipStatus(res.job_id, el);
+    } else {
+       handleZipProcessResponse(res, el);
+    }
   } catch (e) {
     el.className = "result-box error";
     el.innerHTML = `❌ Network Error: ${esc(String(e))}`;
@@ -1247,13 +1417,35 @@ async function processLocalFolder() {
   el.innerHTML = `<span class="spinner"></span> लोकल फोल्डर में ZIP फाइलें खोजी और प्रोसेस की जा रही हैं: <code>${esc(path)}</code>...`;
 
   try {
-    // We send JSON with folder_path
     const res = await apiFetch("/api/documents/process-zip-local", "POST", { folder_path: path });
-    handleZipProcessResponse(res, el);
+    if (res.job_id) {
+       pollZipStatus(res.job_id, el);
+    } else {
+       handleZipProcessResponse(res, el);
+    }
   } catch (e) {
     el.className = "result-box error";
     el.innerHTML = `❌ API Error: ${esc(String(e))}`;
   }
+}
+
+async function pollZipStatus(jobId, el) {
+  const interval = setInterval(async () => {
+    try {
+      const res = await apiFetch(`/api/documents/zip-status/${jobId}`);
+      if (res.status === "complete") {
+        clearInterval(interval);
+        handleZipProcessResponse(res, el);
+      } else {
+        const pct = res.total ? Math.round((res.progress / res.total) * 100) : 0;
+        el.innerHTML = `<span class="spinner"></span> Processing... ${pct}% (${res.progress}/${res.total})`;
+      }
+    } catch (e) {
+      clearInterval(interval);
+      el.className = "result-box error";
+      el.innerHTML = `❌ Polling Error: ${esc(String(e))}`;
+    }
+  }, 1000);
 }
 
 function handleZipProcessResponse(res, el) {
@@ -1796,11 +1988,19 @@ function setupBidStreamV2(jobId) {
     const data = JSON.parse(e.data);
     if (data.type === "info") {
       if (progressText) progressText.innerText = data.message;
-      if (liveLog) liveLog.innerHTML = `<div>&gt; ${esc(data.message)}</div>` + liveLog.innerHTML;
+      if (liveLog) {
+        const div = document.createElement("div");
+        div.innerHTML = `&gt; ${esc(data.message)}`;
+        liveLog.prepend(div);
+      }
       if (data.stats) updateStatsV2(data.stats);
     } else if (data.type === "progress") {
       if (progressText) progressText.innerText = `Processing: ${esc(data.firm)}`;
-      if (liveLog) liveLog.innerHTML = `<div>&gt; ${esc(data.message)}</div>` + liveLog.innerHTML;
+      if (liveLog) {
+        const div = document.createElement("div");
+        div.innerHTML = `&gt; ${esc(data.message)}`;
+        liveLog.prepend(div);
+      }
       if (data.stats) updateStatsV2(data.stats);
     } else if (data.type === "success") {
       if (progressText) progressText.innerText = "Complete!";
@@ -2157,18 +2357,16 @@ async function loadLLMStatus() {
     toggleLLMKeyGroups(s.provider);
   }
   
-  if (se("llm-gemini-key") && s.gemini_key_set) se("llm-gemini-key").placeholder = "•••••••••••••••• (Key Set)";
-  if (se("llm-groq-key") && lc.groq_api_key) se("llm-groq-key").placeholder = "•••••••••••••••• (Key Set)";
+  if (se("llm-gemini-key") && s.gemini_key_set) se("llm-gemini-key").placeholder = "•••••••••••••••• (API set)";
+  if (se("llm-groq-key") && lc.groq_api_key) se("llm-groq-key").placeholder = "•••••••••••••••• (API set)";
   
-  if (se("llm-gemini-model")) se("llm-gemini-model").value = lc.gemini_model || "gemini-1.5-flash";
+  if (se("llm-gemini-model")) se("llm-gemini-model").value = lc.gemini_model || "gemini-2.0-flash";
   if (se("llm-model-id")) se("llm-model-id").value = (s.provider === 'groq' ? lc.groq_model : lc.gemini_model) || "";
   if (se("llm-temp")) se("llm-temp").value = lc.temperature || 0.3;
   if (se("llm-context")) se("llm-context").value = lc.context_length || 8192;
 
-  if (se("llm-noting-master-prompt")) se("llm-noting-master-prompt").value = lc.noting_master_prompt || "";
-  if (se("llm-email-master-prompt")) se("llm-email-master-prompt").value = lc.email_master_prompt || "";
-  if (se("llm-knowhow-master-prompt")) se("llm-knowhow-master-prompt").value = lc.qa_system_prompt || "";
   if (se("llm-summarization-master-prompt")) se("llm-summarization-master-prompt").value = lc.summarization_master_prompt || "";
+  if (se("llm-tec-evaluation-prompt")) se("llm-tec-evaluation-prompt").value = lc.tec_evaluation_prompt || "";
 
   // Proxy settings pre-fill
   const nw = s.network || {};
@@ -2192,9 +2390,91 @@ async function loadLLMStatus() {
   }
 }
 
+async function checkModelAvailability(event) {
+  const btn = event.currentTarget;
+  const originalHtml = btn.innerHTML;
+  btn.innerHTML = `<span class="spinner" style="width:12px;height:12px;border-width:2px;margin:0"></span> Checking...`;
+  btn.disabled = true;
+
+  try {
+    const models = await apiFetch("/api/ai/models");
+    const provider = document.getElementById("llm-provider").value;
+    const providerModels = models[provider] || [];
+
+    if (providerModels.length === 0) {
+      toast(`No suitable models found for ${provider}. Check your API key.`, "warning");
+      return;
+    }
+
+    // Show a small dropdown or list
+    let listHtml = `<div id="model-availability-list" class="floating-list" style="position:absolute; background:white; border:1px solid var(--border); border-radius:8px; box-shadow:0 10px 30px rgba(0,0,0,0.1); z-index:1000; width:280px; max-height:300px; overflow-y:auto; padding:8px; margin-top:5px; right:0; top:100%;">`;
+    listHtml += `<div style="font-size:11px; color:var(--text-secondary); padding:5px; border-bottom:1px solid var(--border); margin-bottom:5px; font-weight:700">Suitable Models for ${provider.toUpperCase()}</div>`;
+    
+    providerModels.forEach(m => {
+      if (!m || !m.id) return;
+      const mId = m.id.replace(/'/g, "\\'"); // Escape single quotes for onclick
+      listHtml += `
+        <div class="model-list-item" style="padding:10px; cursor:pointer; border-radius:4px; font-size:13px; transition:all 0.2s;" onmouseover="this.style.background='rgba(0,0,0,0.05)'" onmouseout="this.style.background='transparent'" onclick="pickModel('${mId}')">
+          <div style="font-weight:700; color:var(--primary)">${esc(m.id)}</div>
+          <div style="font-size:11px; color:var(--text-secondary); line-height:1.2; margin-top:2px;">${esc(m.name || m.id)}</div>
+        </div>
+      `;
+    });
+    listHtml += `</div>`;
+
+    // Remove existing if any
+    const existing = document.getElementById("model-availability-list");
+    if (existing) existing.remove();
+
+    // Append near the button's parent (label)
+    const container = btn.parentElement;
+    container.style.position = "relative";
+    container.insertAdjacentHTML("beforeend", listHtml);
+
+    // Close on click outside
+    setTimeout(() => {
+      const closeModelList = (e) => {
+        const list = document.getElementById("model-availability-list");
+        if (list && !list.contains(e.target) && e.target !== btn) {
+          list.remove();
+          document.removeEventListener("click", closeModelList);
+        }
+      };
+      document.addEventListener("click", closeModelList);
+    }, 10);
+
+  } catch (e) {
+    console.error(e);
+    toast("Failed to fetch models: " + e.message, "error");
+  } finally {
+    btn.innerHTML = originalHtml;
+    btn.disabled = false;
+  }
+}
+
+function pickModel(modelId) {
+  if (!modelId || modelId === 'undefined') {
+    console.error("Attempted to select an undefined model ID");
+    return;
+  }
+  const input = document.getElementById("llm-model-id");
+  if (input) {
+    input.value = modelId;
+    input.classList.add("highlight-flash");
+    setTimeout(() => input.classList.remove("highlight-flash"), 1000);
+  }
+  document.getElementById("model-availability-list")?.remove();
+  toast("Model selected: " + modelId, "success");
+}
+
 function renderQuickAnalysisButtons(buttonsJson) {
-  const container = document.getElementById("quick-analysis-container");
-  if (!container) return;
+  const containers = [
+    { el: document.getElementById("quick-analysis-container"), type: 'button' },
+    { el: document.getElementById("summary-quick-actions"), type: 'button' },
+    { el: document.getElementById("summary-quick-dropdown"), type: 'item' }
+  ].filter(c => c.el !== null);
+  
+  if (containers.length === 0) return;
   
   let buttons = [];
   try {
@@ -2202,16 +2482,48 @@ function renderQuickAnalysisButtons(buttonsJson) {
     if (!Array.isArray(buttons)) buttons = [];
   } catch(e) { buttons = []; }
 
-  if (buttons.length === 0) {
-    container.innerHTML = `<div class="empty-state" style="padding:5px; font-size:11px">No custom buttons defined. Add them in AI Settings.</div>`;
-    return;
-  }
+  containers.forEach(c => {
+    if (buttons.length === 0) {
+      c.el.innerHTML = `<div class="empty-state" style="padding:5px; font-size:11px">No custom buttons defined. Add them in AI Settings.</div>`;
+      return;
+    }
 
-  container.innerHTML = buttons.map(b => `
-    <button class="btn btn-ghost btn-sm" onclick="setExtractContext('${esc(b.prompt).replace(/'/g, "\\'")}')" title="${esc(b.prompt)}">
-      ${esc(b.label)}
-    </button>
-  `).join("");
+    if (c.type === 'button') {
+      c.el.innerHTML = buttons.map(b => `
+        <button class="btn btn-ghost btn-sm" onclick="setExtractContext('${esc(b.prompt).replace(/'/g, "\\'")}', true)" title="${esc(b.prompt)}">
+          ${esc(b.label)}
+        </button>
+      `).join("");
+    } else {
+      // Dropdown items
+      c.el.innerHTML = buttons.map(b => `
+        <div class="model-list-item" style="padding:10px; cursor:pointer; font-size:13px; border-bottom:1px solid var(--border);" onclick="setExtractContext('${esc(b.prompt).replace(/'/g, "\\'")}', true)">
+          ${esc(b.label)}
+        </div>
+      `).join("");
+    }
+  });
+}
+
+function toggleSummaryQuickDropdown(event) {
+  event.stopPropagation();
+  const dropdown = document.getElementById("summary-quick-dropdown");
+  if (!dropdown) return;
+  
+  const isVisible = dropdown.style.display === "block";
+  // Close all other dropdowns
+  document.querySelectorAll(".floating-list").forEach(el => el.style.display = "none");
+  
+  if (!isVisible) {
+    dropdown.style.display = "block";
+    const closeDropdown = (e) => {
+      if (!dropdown.contains(e.target)) {
+        dropdown.style.display = "none";
+        document.removeEventListener("click", closeDropdown);
+      }
+    };
+    document.addEventListener("click", closeDropdown);
+  }
 }
 
 function renderQuickAnalysisConfig(buttonsJson) {
@@ -2294,14 +2606,16 @@ function dropInDefaultPrompt(type) {
     noting: `You are an expert procurement professional.\n\nDraft an official noting in Hindi by default. Convert Hinglish into proper official Hindi.\nIf any sentence is in English, convert it to Hindi unless the source content must stay as-is. Use the available reference context and writing style examples when helpful.\n-Table data also to be converted in Hindi.\n-बोली to be replaced with निविदा\n- use smart intelligence to Ensure the firm name / contract name etc remain same throughout if the user forget to update in later paragraph / content the name of firm / contract number etc.\n- बोलीदाता to be replaced with निविदाकर्ता\n- Use English alternative (in bracket) of complex hindi word / terminology\n- If a highly relevant draft or template is found in the Preferred Style Examples, you MUST follow its exact structure, tone, and phrasing, only substituting the specific details from the additional context provided.\n- Always use Markdown tables for any data comparisons, price lists, or tabular reports.\n\nAdditional Context:\n{additional_context}\n\nReference Context:\n{rag_context}\n\nPreferred Style Examples:\n{user_style_examples}\nCheck if the first paragraph modified by the user contains firm name as "x" and forget to replace in subsequent paragraph, then correct this. Check for calculations made (correct if wrong calculated). If there is any Figure in Rupees, then same may be written in word in bracket also.\nCheck for instruction in additional context. rearrange the noting text as per context. Add contextual topic in appropriate place. Return only the final noting text without subject or sub-heading.`,
     email: `You are an expert Indian Government official drafting a formal email.\n\nRefine the provided draft into a polished official email body in {target_language}.\n- Keep the output as an email, not a file noting.\n- Never add the closing line "\\u092b\\u093e\\u0907\\u0932 \\u0906\\u092a\\u0915\\u0947 \\u0905\\u0935\\u0932\\u094b\\u0915\\u0928\\u093e\\u0930\\u094d\\u0925 \\u092a\\u094d\\u0930\\u0938\\u094d\\u0924\\u0941\\u0924 \\u0939\\u0948 \\u0964" or any similar file-submission line unless the user explicitly asks for it.\n- If the draft already contains a closing/sign-off, keep only one appropriate closing and do not repeat it.\n- Preserve names, references, numbers, contract details, and email-specific structure unless the user asks to change them.\n- Follow the user's stored style and learned wording preferences whenever relevant.\n\nDraft Content:\n{draft_content}\n\nAdditional Instructions:\n{additional_instructions}\n\nPreferred Style Examples:\n{user_style_examples}\n\nStyle Summary:\n{style_summary}\n\nLearning Instructions:\n{learning_instructions}\n\nReturn only the final email content without explanation.`,
     knowhow: `You are an expert Government Official and Procurement Specialist.\nYour task is to answer user questions based STRICTLY on the provided Knowledge Base context.\n\nIf the information is not in the context, say you don't know rather than hallucinating.\nAlways provide rule numbers or circular references if mentioned in the context.\n\nANSWER PATTERN (strictly follow this order):\n1. GFR 2017: Relevant clause and description (if found in context).\n2. Manual for Procurement of Goods: Relevant clause and description (if found in context).\n3. GeM ATC (Additional Terms & Conditions): Relevant clause and description (if found in context).\n4. GSI Manual: Relevant clause and description (if found in context).\n5. Web Search Result / Supplemental Info: Provide relevant external or supplemental info.\n6. Advisory: Provide a practical advisory or recommendation for the user.\n\n=== LEARNING CONTEXT ===\n{learning_context}\n\n=== KNOWLEDGE BASE CONTEXT ===\n{context}\n==============================\n\nUser Question: {prompt}\n\nProvide a helpful, precise answer in {target_language}.`,
-    summarization: `Analyze the following extracted document text based on the USER REQUIREMENT.\n\nUSER REQUIREMENT: {user_requirement}\n\nGUIDELINES:\n1. Provide a structured, professional summary or analysis as per the user requirement.\n2. Maintain an official, government-standard tone.\n3. Highlight key dates, entities (firms, individuals), monetary amounts, and action items.\n4. If technical evaluation is involved, clearly list qualification status for each vendor.\n5. Use Markdown tables or bullet points for clarity.\n6. Provide the result in clean, well-formatted Rich Text (HTML).\n\nEXTRACTED TEXT:\n---\n{document_text}\n---\n`
+    summarization: `Analyze the following extracted document text based on the USER REQUIREMENT.\n\nUSER REQUIREMENT: {user_requirement}\n\nGUIDELINES:\n1. Provide a structured, professional summary or analysis as per the user requirement.\n2. Maintain an official, government-standard tone.\n3. Highlight key dates, entities (firms, individuals), monetary amounts, and action items.\n4. If technical evaluation is involved, clearly list qualification status for each vendor.\n5. Use Markdown tables or bullet points for clarity.\n6. Provide the result in clean, well-formatted Rich Text (HTML).\n\nEXTRACTED TEXT:\n---\n{document_text}\n---\n`,
+    tec_evaluation: `You are an expert Technical Evaluation Committee (TEC) assistant for Government Procurement.\nYour task is to analyze the technical parameters of a firm and decide if they are QUALIFIED or DISQUALIFIED based on the provided criteria.\n\nCRITERIA:\n{criteria}\n\nFIRM DATA:\n{firm_data}\n\nRULES:\n1. Be strict. If a mandatory document is missing or a parameter is 'No'/'Not Submitted', the firm is disqualified.\n2. Provide a concise, professional reason for disqualification.\n3. If the firm is disqualified, the reason MUST start with: "Firm is technically not qualified".\n4. For qualification, provide a brief summary of compliance.\n5. Return the result strictly in JSON format:\n{\n  "is_qualified": boolean,\n  "reason": "Official reason string...",\n  "summary": "Brief summary of parameters analyzed..."\n}`
   };
 
   const idMap = {
     noting: "llm-noting-master-prompt",
     email: "llm-email-master-prompt",
     knowhow: "llm-knowhow-master-prompt",
-    summarization: "llm-summarization-master-prompt"
+    summarization: "llm-summarization-master-prompt",
+    tec_evaluation: "llm-tec-evaluation-prompt"
   };
 
   const el = document.getElementById(idMap[type]);
@@ -2369,7 +2683,8 @@ async function saveLLMConfig() {
     noting_master_prompt: v("llm-noting-master-prompt"),
     email_master_prompt: v("llm-email-master-prompt"),
     qa_system_prompt: v("llm-knowhow-master-prompt"),
-    summarization_master_prompt: v("llm-summarization-master-prompt")
+    summarization_master_prompt: v("llm-summarization-master-prompt"),
+    tec_evaluation_prompt: v("llm-tec-evaluation-prompt")
   };
 
   const geminiKey = v("llm-gemini-key").trim();
@@ -2452,7 +2767,7 @@ async function extractTecData() {
   if (!fileInput.files.length) { toast("Please select a PDF or DOCX file.", "error"); return; }
 
   el.style.display = "block"; el.className = "result-box";
-  el.innerHTML = `<span class="spinner"></span> Extracting and analyzing tables...`;
+  el.innerHTML = `<span class="spinner"></span> Starting background analysis...`;
   tableSec.style.display = "none";
   mappingSec.style.display = "none";
 
@@ -2460,20 +2775,47 @@ async function extractTecData() {
   fd.append("file", fileInput.files[0]);
 
   try {
-    const r = await fetch("/api/tec/analyze", { method: "POST", body: fd });
+    const useLlm = document.getElementById("tec-llm-assist").checked;
+    const r = await fetch("/api/tec/analyze", { 
+      method: "POST", 
+      body: fd,
+      headers: { 'X-Use-LLM': useLlm ? 'true' : 'false' }
+    });
     const res = await r.json();
 
-    if (res.success) {
-      el.style.display = "none";
-      tecSession = { file_id: res.file_id, extension: res.extension };
-
-      renderMappingTable(res.parameters);
-      mappingSec.style.display = "block";
-      toast("Parameters detected! Please define your criteria.", "success");
+    if (res.success && res.job_id) {
+      currentTecAnalyzeJobId = res.job_id;
+      el.innerHTML = `<span class="spinner"></span> Extracting and analyzing tables in background (Job: ${res.job_id})...`;
+      
+      const poll = setInterval(async () => {
+        try {
+          const statusRes = await apiFetch(`/api/tec/analyze-status/${currentTecAnalyzeJobId}`);
+          if (statusRes.status === "complete") {
+            clearInterval(poll);
+            const result = statusRes.result;
+            el.style.display = "none";
+            tecSession = { file_id: result.file_id, extension: result.extension };
+            renderMappingTable(result.parameters);
+            mappingSec.style.display = "block";
+            toast("Parameters detected! Please define your criteria.", "success");
+            currentTecAnalyzeJobId = null;
+          } else if (statusRes.status === "failed") {
+            clearInterval(poll);
+            el.className = "result-box error";
+            el.innerHTML = `❌ ${esc(statusRes.error || "Failed to analyze document.")}`;
+            toast("Error: " + (statusRes.error || "Failed"), "error");
+            currentTecAnalyzeJobId = null;
+          }
+        } catch (pollErr) {
+          clearInterval(poll);
+          el.className = "result-box error";
+          el.innerHTML = `❌ Polling Error: ${esc(String(pollErr))}`;
+          currentTecAnalyzeJobId = null;
+        }
+      }, 2000);
     } else {
       el.className = "result-box error";
-      el.innerHTML = `❌ ${esc(res.error || "Failed to analyze document.")}`;
-      toast("Error: " + (res.error || "Failed"), "error");
+      el.innerHTML = `❌ ${esc(res.error || "Failed to start analysis.")}`;
     }
   } catch (e) {
     el.className = "result-box error";
@@ -2516,40 +2858,64 @@ async function generateFinalTecResults() {
   });
 
   el.style.display = "block"; el.className = "result-box";
-  el.innerHTML = `<span class="spinner"></span> Generating final evaluations...`;
+  el.innerHTML = `<span class="spinner"></span> Submitting extraction job...`;
   mappingSec.style.display = "none";
 
   try {
     const res = await apiFetch("/api/tec/extract", "POST", {
       file_id: tecSession.file_id,
       extension: tecSession.extension,
-      criteria: criteria
+      criteria: criteria,
+      use_llm: document.getElementById("tec-llm-assist").checked
     });
 
-    if (res.success) {
-      el.style.display = "none";
-      tableSec.style.display = "block";
-      const s = res.stats;
-      const statsEl = document.getElementById("tec-stats-summary");
-      if (statsEl) {
-        statsEl.innerHTML = `<div>Total: ${s.total_detected}</div><div>Qualified: ${s.total_qualified}</div>`;
-      }
-      tbody.innerHTML = res.results.map((item, idx) => `
-        <tr data-idx="${idx}" data-firm="${esc(item.firm_name)}">
-          <td>${idx + 1}</td>
-          <td><textarea class="form-control tec-firm">${esc(item.firm_name)}</textarea></td>
-          <td>
-            <select class="form-control tec-status">
-              <option value="true" ${item.is_qualified ? "selected" : ""}>Qualified</option>
-              <option value="false" ${!item.is_qualified ? "selected" : ""}>Not Qualified</option>
-            </select>
-          </td>
-          <td><textarea class="form-control tec-comment">${esc(item.comment)}</textarea></td>
-        </tr>`).join("");
-      toast("Results generated!", "success");
+    if (res.success && res.job_id) {
+      currentTecExtractJobId = res.job_id;
+      el.innerHTML = `<span class="spinner"></span> Generating final evaluations in background (Job: ${res.job_id})...`;
+      
+      const poll = setInterval(async () => {
+        try {
+          const statusRes = await apiFetch(`/api/tec/extract-status/${currentTecExtractJobId}`);
+          if (statusRes.status === "complete") {
+            clearInterval(poll);
+            const result = statusRes.result;
+            el.style.display = "none";
+            tableSec.style.display = "block";
+            const s = result.stats;
+            const statsEl = document.getElementById("tec-stats-summary");
+            if (statsEl) {
+              statsEl.innerHTML = `<div>Total: ${s.total_detected}</div><div>Qualified: ${s.total_qualified}</div>`;
+            }
+            tbody.innerHTML = result.results.map((item, idx) => `
+              <tr data-idx="${idx}" data-firm="${esc(item.firm_name)}">
+                <td>${idx + 1}</td>
+                <td><textarea class="form-control tec-firm">${esc(item.firm_name)}</textarea></td>
+                <td>
+                  <select class="form-control tec-status">
+                    <option value="true" ${item.is_qualified ? "selected" : ""}>Qualified</option>
+                    <option value="false" ${!item.is_qualified ? "selected" : ""}>Not Qualified</option>
+                  </select>
+                </td>
+                <td><textarea class="form-control tec-comment">${esc(item.comment)}</textarea></td>
+              </tr>`).join("");
+            toast("Results generated!", "success");
+            currentTecExtractJobId = null;
+          } else if (statusRes.status === "failed") {
+            clearInterval(poll);
+            el.className = "result-box error";
+            el.innerHTML = `❌ ${esc(statusRes.error || "Failed to extract results.")}`;
+            currentTecExtractJobId = null;
+          }
+        } catch (pollErr) {
+          clearInterval(poll);
+          el.className = "result-box error";
+          el.innerHTML = `❌ Polling Error: ${esc(String(pollErr))}`;
+          currentTecExtractJobId = null;
+        }
+      }, 2000);
     } else {
       el.className = "result-box error";
-      el.innerHTML = `❌ ${esc(res.error)}`;
+      el.innerHTML = `❌ ${esc(res.error || "Failed to start extraction.")}`;
     }
   } catch (e) { el.innerHTML = `❌ Error: ${e.message}`; }
 }
@@ -2627,6 +2993,13 @@ async function executeTecBot() {
       if (data.type === "info") {
         progressText.innerHTML = esc(data.message);
         logToElement("tec-live-log", data.message);
+      }
+      if (data.type === "progress") {
+        progressText.innerHTML = `Evaluated: ${esc(data.firm)}`;
+        logToElement("tec-live-log", `✅ ${data.firm}: ${data.message}`);
+        if (data.stats) {
+           // update stats if available
+        }
       }
       if (data.type === "complete") {
         eventSource.close();
@@ -2955,13 +3328,15 @@ async function refineEmailLibraryTemplate(id, btn) {
   const editor = row.querySelector(".library-editor");
   const contextInput = document.getElementById(`refine-email-context-${id}`);
   const mods = contextInput ? contextInput.value.trim() : "";
-  const text = editor.innerText.trim();
+  const text = (editor.innerText || editor.textContent || "").trim();
   const html = editor.innerHTML;
 
   if (!text) return toast("Content is empty", "error");
 
+  const originalBtnHtml = btn.innerHTML;
   btn.disabled = true;
-  btn.innerHTML = `<span class="spinner"></span>`;
+  btn.classList.add("loading");
+  btn.innerHTML = `<span class="spinner"></span> Refining...`;
   
   try {
     const res = await apiFetch("/api/noting/refine", "POST", {
@@ -2985,7 +3360,8 @@ async function refineEmailLibraryTemplate(id, btn) {
     toast("Error: " + e.message, "error");
   } finally {
     btn.disabled = false;
-    btn.innerHTML = "✨ Refine AI";
+    btn.classList.remove("loading");
+    btn.innerHTML = originalBtnHtml;
   }
 }
 
@@ -3104,46 +3480,107 @@ function openTemplateInEditor(id, type) {
   }
 }
 
+function applyProEditorChanges() {
+  if (!window.currentEditorTargetId) {
+    closeModal('modal-pro-editor');
+    return;
+  }
+  
+  const content = getEditorHtml("pro-editor-container");
+  setEditorContent(window.currentEditorTargetId, content);
+  
+  toast("Changes applied successfully!", "success");
+  closeModal('modal-pro-editor');
+}
+
 function proEditorAction(action) {
   if (action === 'remove-space') {
-    const text = window.quill.getText();
-    const cleaned = text.split('\n').filter(line => line.trim() !== '').join('\n');
-    window.quill.setText(cleaned);
+    // Remove blank lines while preserving formatting (operate on HTML)
+    if (!window.quill) return;
+    const html = window.quill.root.innerHTML;
+    // Strip empty <p> and <br>-only paragraphs
+    const cleaned = html
+      .replace(/<p[^>]*>\s*(<br\s*\/?>)?\s*<\/p>/gi, '')
+      .replace(/(\s*<br\s*\/?\s*>){2,}/gi, '<br>')
+      .trim();
+    window.quill.clipboard.dangerouslyPasteHTML(cleaned);
+    toast('Blank lines removed', 'success');
+  } else if (action === 'insert-table') {
+    insertProTable();
   } else if (action === 'refine') {
     refineProEditorAI();
   } else if (action === 'copy') {
     copyProEditorText();
+  } else if (action === 'copy-html') {
+    copyProEditorHtml();
   }
+}
+
+function insertProTable(rows, cols) {
+  if (!window.quill) return toast('Editor not ready', 'error');
+  rows = rows || 3;
+  cols = cols || 3;
+
+  // Try quill-table-better API first
+  try {
+    const tableBetterModule = window.quill.getModule('table-better');
+    if (tableBetterModule && typeof tableBetterModule.insertTable === 'function') {
+      tableBetterModule.insertTable(rows, cols);
+      toast(`Table ${rows}×${cols} inserted`, 'success');
+      return;
+    }
+  } catch(e) { /* fall through */ }
+
+  // Fallback: manually build an HTML table and paste it
+  let tableHtml = '<table border="1" style="border-collapse:collapse;width:100%;margin:8px 0">';
+  tableHtml += '<tbody>';
+  for (let r = 0; r < rows; r++) {
+    tableHtml += '<tr>';
+    for (let c = 0; c < cols; c++) {
+      const tag = r === 0 ? 'th' : 'td';
+      tableHtml += `<${tag} style="border:1px solid #ccc;padding:8px;min-width:60px">&nbsp;</${tag}>`;
+    }
+    tableHtml += '</tr>';
+  }
+  tableHtml += '</tbody></table><p><br></p>';
+
+  const range = window.quill.getSelection(true);
+  window.quill.clipboard.dangerouslyPasteHTML(range.index, tableHtml);
+  toast(`Table ${rows}×${cols} inserted`, 'success');
 }
 
 async function refineProEditorAI() {
-  const modifications = v("pro-refine-context");
-  // Modifications no longer required; will fall back to master prompt if empty
-  
-  const text = getEditorText("pro-editor-container");
-  const html = getEditorHtml("pro-editor-container");
-  const documentType = window.currentEditorTargetId === "email-editor-container" ? "email" : "noting";
-  if (!text.trim()) return;
-
-  toast("Refining draft via AI...", "info");
-  const res = await apiFetch("/api/noting/refine", "POST", {
-    text,
-    html,
-    modifications,
-    document_type: documentType
-  });
-  if (res.success) {
-    setEditorContent("pro-editor-container", res.refined_html || res.refined_text || "");
-    toast("Draft refined successfully!", "success");
-    document.getElementById("pro-refine-context").value = "";
-  }
+  // Use the consolidated function but pass the correct event context if needed
+  await refineNotingAI();
 }
 
 function copyProEditorText() {
+  if (!window.quill) return;
   const text = window.quill.getText();
   navigator.clipboard.writeText(text).then(() => {
-    toast("Content copied to clipboard!", "success");
+    toast('Plain text copied to clipboard!', 'success');
+  }).catch(() => {
+    toast('Copy failed — try Ctrl+A then Ctrl+C inside the editor', 'error');
   });
+}
+
+function copyProEditorHtml() {
+  if (!window.quill) return;
+  const html = window.quill.root.innerHTML;
+  // Use ClipboardItem if available (modern browsers)
+  try {
+    const blob = new Blob([html], { type: 'text/html' });
+    const textBlob = new Blob([window.quill.getText()], { type: 'text/plain' });
+    const item = new ClipboardItem({ 'text/html': blob, 'text/plain': textBlob });
+    navigator.clipboard.write([item]).then(() => {
+      toast('Formatted HTML copied! Paste into Word/LibreOffice.', 'success');
+    });
+  } catch(e) {
+    // Fallback: copy plain text
+    navigator.clipboard.writeText(window.quill.getText()).then(() => {
+      toast('Copied as plain text (HTML copy not supported by browser)', 'warning');
+    });
+  }
 }
 
 // ─── SHARED UTILS ───────────────────────────────────
@@ -3217,42 +3654,85 @@ async function directEmailDraft() {
   }
 }
 
-async function refineEmailAI() {
-  const text = getEditorText("email-template-editor");
-  const html = getEditorHtml("email-template-editor");
-  const refineBtn = document.getElementById("email-refine-btn");
-  const mods = v("email-refine-context").trim();
-  const status = document.getElementById("email-status");
+async function refineEmailAI(clickedBtn) {
+  // 1. Determine Source Editor based on the clicked button or modal state
+  let sourceId = "email-template-editor";
+  let isPro = false;
+  
+  if (document.getElementById("modal-pro-editor")?.classList.contains("open")) {
+    sourceId = "pro-editor-container";
+    isPro = true;
+  } else if (clickedBtn && clickedBtn.id === "email-refine-btn") {
+    sourceId = "email-template-editor";
+  } else if (clickedBtn && clickedBtn.id === "email-bar-refine-btn") {
+    sourceId = "email-editor-container";
+  } else if (getEditorText("email-editor-container").length > 0) {
+    sourceId = "email-editor-container";
+  }
+
+  const text = getEditorText(sourceId);
+  const html = getEditorHtml(sourceId);
+  const refineBtn = clickedBtn || document.getElementById("email-refine-btn");
+  const mods = isPro ? v("pro-refine-context").trim() : v("email-refine-context").trim();
+  const status = isPro ? null : document.getElementById("email-status");
 
   if (!text) return toast("Base text required", "error");
 
-  refineBtn.disabled = true;
-  status.style.display = "block";
-  status.innerHTML = `<span class="spinner"></span> AI is refining and formalizing your email…`;
+  if (refineBtn) {
+    refineBtn.disabled = true;
+    refineBtn.classList.add("loading");
+  }
+  
+  if (status) {
+    status.style.display = "block";
+    status.innerHTML = `<span class="spinner"></span> AI is refining and formalizing your email…`;
+  } else if (isPro) {
+    toast("AI is refining your email...", "info");
+  }
 
   try {
     const res = await apiFetch("/api/noting/refine", "POST", {
       text,
       html,
       modifications: mods,
-      target_lang: document.getElementById("email-lang-selector").value,
+      target_lang: "english",
       document_type: "email"
     });
 
-    status.style.display = "none";
-    refineBtn.disabled = false;
+    if (status) status.style.display = "none";
+    if (refineBtn) {
+      refineBtn.disabled = false;
+      refineBtn.classList.remove("loading");
+    }
 
     if (res.success) {
-      document.getElementById("email-suggestion-section").style.display = "block";
-      setEditorContent("email-editor-container", res.refined_html || res.refined_text || "");
+      if (res.refined_text && res.refined_text.startsWith("[AI Error")) {
+          toast(res.refined_text, "error");
+          return;
+      }
+
+      setEditorContent(sourceId, res.refined_html || res.refined_text || "");
+      if (!isPro && sourceId !== "email-editor-container") {
+          setEditorContent("email-editor-container", res.refined_html || res.refined_text || "");
+      }
+
+      if (!isPro) {
+        document.getElementById("email-suggestion-section").style.display = "block";
+        document.getElementById("email-suggestion-section").scrollIntoView({ behavior: "smooth" });
+      } else {
+        document.getElementById("pro-refine-context").value = "";
+      }
       toast("Email refined successfully!", "success");
-      document.getElementById("email-suggestion-section").scrollIntoView({ behavior: "smooth" });
     } else {
       toast(res.error || "Refinement failed", "error");
     }
   } catch (e) {
-    status.innerHTML = `<span style="color:var(--danger)">Error: ${e.message}</span>`;
-    refineBtn.disabled = false;
+    if (status) status.innerHTML = `<span style="color:var(--danger)">Error: ${e.message}</span>`;
+    if (refineBtn) {
+      refineBtn.disabled = false;
+      refineBtn.classList.remove("loading");
+    }
+    toast("Error: " + e.message, "error");
   }
 }
 
@@ -3288,9 +3768,9 @@ function saveEmailToLibrary() {
 // ─── EXTRACT TEXT MODULE ──────────────────────────
 async function runTextExtraction() {
   const fileInput = document.getElementById("extract-file-input");
-  const status = document.getElementById("extract-status");
-  const btn = document.getElementById("btn-run-extract");
-  const method = document.querySelector('input[name="extract-method"]:checked')?.value || "standard";
+  const status = document.getElementById("smart-status"); // Use unified status box
+  const btn = document.getElementById("btn-run-extraction");
+  const method = "vision"; // Default to vision for better quality
 
   if (!fileInput.files.length && !window.extractClipboardBlob) {
     return toast("Please select a file or paste an image first.", "error");
@@ -3298,13 +3778,17 @@ async function runTextExtraction() {
 
   status.style.display = "block";
   status.className = "result-box info";
-  status.innerHTML = `<span class="spinner"></span> 🚀 Starting extraction via ${method === 'vision' ? 'Vision LLM' : 'Standard OCR'}...`;
+  status.innerHTML = `<span class="spinner"></span> 🚀 Uploading and starting extraction via Vision LLM...`;
   btn.disabled = true;
 
   try {
     const formData = new FormData();
+    let fileHash = null;
+    
     if (fileInput.files.length) {
-      formData.append("file", fileInput.files[0]);
+      const file = fileInput.files[0];
+      formData.append("file", file);
+      fileHash = await calculateFileHash(file);
     } else if (window.extractClipboardBlob) {
       formData.append("file", window.extractClipboardBlob, "pasted_image.png");
     }
@@ -3316,110 +3800,259 @@ async function runTextExtraction() {
     });
 
     const data = await res.json();
-    if (data.success) {
-      status.innerHTML = `✅ Extraction complete!`;
-      document.getElementById("extract-result-container").style.display = "block";
-      if (window.extractQuill) {
-        window.extractQuill.setContents([]);
-        const cleanContent = cleanAiOutput(data.text);
-        window.extractQuill.clipboard.dangerouslyPasteHTML(data.html || plainTextToHtml(cleanContent));
-      }
-      toast("Text extracted successfully", "success");
+    if (data.success && data.job_id) {
+      pollExtractionStatus(data.job_id, status, btn, "Extraction", (result) => {
+        const out = result.text || result;
+        if (window.extractQuill) {
+          window.extractQuill.setContents([]);
+          const cleanContent = cleanAiOutput(out);
+          window.extractQuill.clipboard.dangerouslyPasteHTML(result.html || plainTextToHtml(cleanContent));
+        }
+        
+        // Update summary area below
+        const summaryArea = document.getElementById("ai-summary-result");
+        if (summaryArea) {
+           summaryArea.innerHTML = result.html || plainTextToHtml(out);
+        }
+
+        // Store current text and hash for smart process
+        window.lastExtractedText = out;
+        window.lastFileHash = fileHash;
+      });
     } else {
       status.className = "result-box error";
       status.innerHTML = `❌ Error: ${esc(data.error)}`;
+      btn.disabled = false;
     }
   } catch (e) {
     status.className = "result-box error";
     status.innerHTML = `❌ Connection Error: ${esc(e.message)}`;
-    } finally {
     btn.disabled = false;
+  }
+}
+
+async function pollExtractionStatus(jobId, statusEl, btn, label, onComplete) {
+  const interval = setInterval(async () => {
+    try {
+      const res = await apiFetch(`/api/extract/status/${jobId}`);
+      if (res.status === "complete") {
+        clearInterval(interval);
+        statusEl.className = "result-box success";
+        statusEl.innerHTML = `✅ ${label} complete!`;
+        btn.disabled = false;
+        if (onComplete) onComplete(res.result);
+      } else if (res.status === "failed") {
+        clearInterval(interval);
+        statusEl.className = "result-box error";
+        statusEl.innerHTML = `❌ ${label} failed: ${esc(res.error)}`;
+        btn.disabled = false;
+      } else {
+        // Still running
+        statusEl.innerHTML = `<span class="spinner"></span> ⚙️ ${label} in progress... please wait.`;
+      }
+    } catch (e) {
+      clearInterval(interval);
+      statusEl.className = "result-box error";
+      // Safely stringify — e may be an Error object or raw value, not always a string
+      const errMsg = (e && e.message) ? String(e.message) : String(e);
+      statusEl.innerHTML = `❌ Polling Error: ${esc(errMsg)}`;
+      btn.disabled = false;
+    }
+  }, 2000);
+}
+
+/* ── Direct AI Analyze ─ sends file straight to LLM without OCR extraction ── */
+async function runDirectAnalyze() {
+  const fileInput = document.getElementById('extract-file-input');
+  const context   = document.getElementById('extract-ai-context').value.trim();
+  const statusEl  = document.getElementById('smart-status'); // Use existing status box
+  const btn       = document.getElementById('btn-run-extraction') || document.getElementById('btn-run-smart');
+
+  if (!fileInput || !fileInput.files.length) {
+    toast('Please upload a file first (PDF or image).', 'warning');
+    return;
+  }
+
+  const file = fileInput.files[0];
+  statusEl.style.display = 'block';
+  statusEl.className = 'result-box info';
+  statusEl.innerHTML = '<span class="spinner"></span> 🧠 Sending file directly to AI for analysis...';
+  if (btn) btn.disabled = true;
+
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('context', context || 'Provide a clear, structured summary of this document.');
+
+    const r = await fetch('/api/extract/direct-analyze', { method: 'POST', body: fd });
+    const res = await r.json();
+
+    if (res.success) {
+      statusEl.className = 'result-box success';
+      statusEl.innerHTML = '✅ Analysis complete!';
+
+      // 1. Render into the main extraction editor
+      const quillEditor = window.extractQuill;
+      if (quillEditor) {
+        quillEditor.root.innerHTML = '';
+        quillEditor.clipboard.dangerouslyPasteHTML(0, plainTextToHtml(res.result || ''));
+      }
+      
+      // 2. Render into the summary area below
+      const summaryArea = document.getElementById("ai-summary-result");
+      if (summaryArea) {
+         summaryArea.innerHTML = plainTextToHtml(res.result || '');
+      }
+
+      window.lastExtractedText = res.result || '';
+      toast('🧠 Direct analysis done!', 'success');
+    } else {
+      statusEl.className = 'result-box error';
+      statusEl.innerHTML = `❌ ${esc(res.error || 'Direct analysis failed.')}`;
+    }
+  } catch (e) {
+    statusEl.className = 'result-box error';
+    statusEl.innerHTML = `❌ Network Error: ${esc(String(e.message || e))}`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function calculateFileHash(file) {
+  try {
+    const buffer = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (e) {
+    console.warn("Hash calculation failed:", e);
+    return null;
   }
 }
 
 async function runSmartProcess() {
-  const context = document.getElementById("extract-ai-context").value;
+  const contextEl = document.getElementById("extract-ai-context");
+  const context = contextEl ? contextEl.value : "";
   const status = document.getElementById("smart-status");
-  const btn = document.getElementById("btn-run-smart");
+  const btn = document.getElementById("btn-run-extraction") || document.getElementById("btn-run-smart");
   const fileInput = document.getElementById("summary-file-input");
   
-  status.style.display = "block";
-  status.className = "result-box info";
-  btn.disabled = true;
+  if (status) {
+    status.style.display = "block";
+    status.className = "result-box info";
+    status.innerHTML = `<span class="spinner"></span> Initializing processing...`;
+  }
+  if (btn) btn.disabled = true;
 
   try {
-    let rawText = window.extractQuill ? window.extractQuill.getText().trim() : "";
+    let rawText = (window.lastExtractedText || "").trim();
+    let fileHash = window.lastFileHash || null;
     
-    // 1. Handle direct file upload for summary
-    if (fileInput.files.length > 0) {
-      status.innerHTML = `<span class="spinner"></span> 📄 Extracting text from file for summary...`;
-      const formData = new FormData();
-      formData.append("file", fileInput.files[0]);
-      formData.append("method", "vision"); // Use AI extraction for best quality
+    // Fallback: strip HTML from Quill if no lastExtractedText
+    if (!rawText && window.extractQuill) {
+      const html = window.extractQuill.root.innerHTML;
+      const tmp = document.createElement('div');
+      tmp.innerHTML = html;
+      rawText = (tmp.innerText || tmp.textContent || "").trim();
+    }
+    
+    // 1. Handle direct file upload for summary (Direct Analysis path)
+    if (fileInput && fileInput.files.length > 0) {
+      status.innerHTML = `<span class="spinner"></span> 📄 Analyzing file directly (One-step summary)...`;
+      const file = fileInput.files[0];
       
-      const extRes = await fetch(API + "/api/extract/text", { 
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("context", context);
+      formData.append("method", "vision");
+      
+      const res = await fetch("/api/extract/direct-analyze", { 
         method: "POST", 
         body: formData 
       });
       
-      const extData = await extRes.json();
-      if (!extData.success) throw new Error(extData.error || "Extraction failed");
+      const data = await res.json();
+      if (!data.success || !data.job_id) throw new Error(data.error || "Direct analysis failed");
       
-      rawText = extData.text;
-      toast("File extracted successfully. Now analyzing...", "info");
+      return pollExtractionStatus(data.job_id, status, btn, "Direct Analysis", (result) => {
+        const out = result.processed_text || "";
+        // Update summary area only
+        const summaryArea = document.getElementById("ai-summary-result");
+        if (summaryArea) {
+           summaryArea.innerHTML = plainTextToHtml(out);
+        }
+        fileInput.value = ""; 
+        toast("Direct analysis complete!", "success");
+      });
     }
     
     // 2. Fallback check
-    if (!rawText && !document.getElementById("extract-file-input").files.length && !window.extractClipboardBlob) {
-      document.getElementById("extract-result-container").style.display = "block";
-      if (window.extractQuill) window.extractQuill.focus();
-      status.style.display = "none";
-      btn.disabled = false;
-      return toast("Please paste text or select a file to summarize.", "info");
+    if (!rawText && !window.extractClipboardBlob && (!fileInput || !fileInput.files.length)) {
+       // Check if there is a file in the main extraction input
+       const mainInput = document.getElementById("extract-file-input");
+       if (mainInput && mainInput.files.length > 0) {
+          // Trigger the main process instead
+          return runTextExtraction();
+       }
+       
+       if (status) status.style.display = "none";
+       if (btn) btn.disabled = false;
+       return toast("Please paste text or select a file to summarize.", "info");
     }
 
-    // 3. AI Analysis
-    status.innerHTML = `<span class="spinner"></span> 🤖 Analyzing document based on your requirement...`;
+    // 3. AI Analysis (Async)
+    if (status) status.innerHTML = `<span class="spinner"></span> 🤖 Submitting document for AI Analysis...`;
     const res = await apiFetch("/api/extract/smart-process", "POST", {
       text: rawText,
-      context: context
+      context: context,
+      file_hash: fileHash
     });
 
-    if (res.success) {
-      status.className = "result-box success";
-      status.innerHTML = `✅ AI Analysis complete!`;
-      
-      // Update result editor
-      if (window.extractQuill) {
-        window.extractQuill.setContents([]);
-        const cleanContent = cleanAiOutput(res.processed_text);
-        const processedHtml = plainTextToHtml(cleanContent);
-        window.extractQuill.clipboard.dangerouslyPasteHTML(processedHtml);
-      }
-      
-      document.getElementById("extract-result-container").style.display = "block";
-      toast("AI processing successful!", "success");
-      
-      // Reset the file input after success
-      fileInput.value = "";
+    if (res.success && res.job_id) {
+      pollExtractionStatus(res.job_id, status, btn, "AI Analysis", (result) => {
+        const out = result.processed_text || "";
+        // Update result editor
+        if (window.extractQuill) {
+          window.extractQuill.setContents([]);
+          const cleanContent = cleanAiOutput(out);
+          const processedHtml = plainTextToHtml(cleanContent);
+          window.extractQuill.clipboard.dangerouslyPasteHTML(processedHtml);
+        }
+        
+        // Update summary area
+        const summaryArea = document.getElementById("ai-summary-result");
+        if (summaryArea) {
+           summaryArea.innerHTML = plainTextToHtml(out);
+        }
+        
+        // Reset the file input after success
+        if (fileInput) fileInput.value = "";
+      });
     } else {
-      status.className = "result-box error";
-      status.innerHTML = `❌ Error: ${esc(res.error)}`;
+      if (status) {
+        status.className = "result-box error";
+        status.innerHTML = `❌ Error: ${esc(res.error)}`;
+      }
+      if (btn) btn.disabled = false;
     }
   } catch (e) {
-    status.className = "result-box error";
-    status.innerHTML = `❌ Error: ${esc(e.message)}`;
-  } finally {
-    btn.disabled = false;
+    if (status) {
+      status.className = "result-box error";
+      status.innerHTML = `❌ Error: ${esc(e.message)}`;
+    }
+    if (btn) btn.disabled = false;
   }
 }
 
-function setExtractContext(text) {
+function setExtractContext(text, trigger = false) {
   const textarea = document.getElementById("extract-ai-context");
   if (textarea) {
     textarea.value = text;
     textarea.style.height = "auto";
     textarea.style.height = (textarea.scrollHeight) + "px";
+    if (trigger) {
+      setTimeout(() => runSmartProcess(), 50);
+    }
   }
 }
 
@@ -3482,31 +4115,61 @@ function previewExtractFile(e) {
   }
 }
 
-async function processMultipleZips() {
-  const input = document.getElementById("pdf-zip-input");
+function updateZipFileList(input) {
+  const count = input.files.length;
+  const countEl = document.getElementById("zip-file-count");
+  const startBtn = document.getElementById("btn-start-zip-process");
+  
+  if (count > 0) {
+    countEl.textContent = `📁 ${count} ZIP file(s) selected`;
+    countEl.style.display = "block";
+    startBtn.style.display = "inline-block";
+  } else {
+    countEl.style.display = "none";
+    startBtn.style.display = "none";
+  }
+}
+
+async function processMultipleZipsManual() {
+  const input = document.getElementById("zip-batch-input");
+  const el = document.getElementById("zip-process-result");
+  
   if (!input.files.length) return toast("Select at least one ZIP file", "error");
 
+  el.style.display = "block";
+  el.className = "result-box";
+  el.innerHTML = `<span class="spinner"></span> Processing ${input.files.length} ZIP files...`;
+  
   const formData = new FormData();
   for (let file of input.files) {
-    formData.append("zips", file);
+    formData.append("files", file); // Backend expects 'files'
   }
+  
+  // Add options
+  formData.append("auto_rename", document.getElementById("zip-opt-rename").checked);
+  formData.append("generate_summary", document.getElementById("zip-opt-summary").checked);
 
-  toast("Processing multiple ZIP files...", "info");
   try {
-    const res = await fetch("/api/documents/process-zip-multi", {
+    const res = await fetch("/api/documents/process-zip", {
       method: "POST",
       body: formData
     });
     const data = await res.json();
-    if (data.success) {
-      toast(`Successfully processed ${data.processed_count} files`, "success");
-      loadKBDocs();
+    if (data.job_id) {
+       pollZipStatus(data.job_id, el);
     } else {
-      toast("Error processing ZIPs: " + data.error, "error");
+       handleZipProcessResponse(data, el);
     }
   } catch (e) {
+    el.className = "result-box error";
+    el.innerHTML = `❌ Error: ${e.message}`;
     toast("Error: " + e.message, "error");
   }
+}
+
+async function processMultipleZips() {
+  // Legacy function - redirected to manual flow or kept for compatibility
+  processMultipleZipsManual();
 }
 
 async function downloadExtractAsDoc() {
@@ -3582,11 +4245,12 @@ function plainTextToHtml(text) {
   // return it as is to allow the editor to render it.
   const hasHtml = /<[a-z][\s\S]*>/i.test(text);
   if (hasHtml) {
-    return text;
+    // Fix [Parchment] Maximum optimize iterations reached by removing newlines/spaces between tags
+    return text.replace(/>\s+</g, '><');
   }
 
   // 3. Check for Markdown Tables
-  if (text.includes('|') \u0026\u0026 text.includes('--')) {
+  if (text.includes('|') && text.includes('--')) {
     text = markdownTablesToHtml(text);
     return text; // It now contains HTML
   }
@@ -3594,7 +4258,7 @@ function plainTextToHtml(text) {
   // 4. Fallback: Convert plain text with newlines to HTML paragraphs
   return text
     .split(/\n\n+/)
-    .map(para =\u003e `<p>${esc(para).replace(/\n/g, '<br>')}</p>`)
+    .map(para => `<p>${esc(para).replace(/\n/g, '<br>')}</p>`)
     .join('');
 }
 
@@ -3614,19 +4278,19 @@ function markdownTablesToHtml(text) {
   let html = '';
   let tableHtml = '';
 
-  lines.forEach(line =\u003e {
-    if (line.trim().startsWith('|') \u0026\u0026 line.trim().endsWith('|')) {
+  lines.forEach(line => {
+    if (line.trim().startsWith('|') && line.trim().endsWith('|')) {
       if (!inTable) {
         inTable = true;
         tableHtml = '<table border="1" style="border-collapse: collapse; width: 100%;"><tbody>';
       }
       
-      const cells = line.split('|').filter(c =\u003e c.trim() !== '' || line.indexOf('|' + c + '|') !== -1);
+      const cells = line.split('|').filter(c => c.trim() !== '' || line.indexOf('|' + c + '|') !== -1);
       // Skip separator lines like |---|---|
       if (line.includes('---')) return;
 
       tableHtml += '<tr>';
-      cells.forEach(cell =\u003e {
+      cells.forEach(cell => {
         tableHtml += `<td style="border: 1px solid #ccc; padding: 8px;">${esc(cell.trim())}</td>`;
       });
       tableHtml += '</tr>';
@@ -3751,5 +4415,117 @@ function initializeUIStability() {
       icon.textContent = "▶";
     }
   }
+
+  // Auto-resize all textareas on start and input
+  document.querySelectorAll('textarea.form-control').forEach(autoResizeTextarea);
+  document.body.addEventListener('input', (e) => {
+    if (e.target.tagName === 'TEXTAREA' && e.target.classList.contains('form-control')) {
+      autoResizeTextarea(e.target);
+    }
+  });
+} // ← FIXED: was missing closing brace, trapping all monitor functions inside
+
+// --- GeM Monitoring ---
+let monitorJobId = null;
+let monitorTimer = null;
+
+async function toggleGeMMonitor() {
+  const btn = document.getElementById("btn-start-monitor");
+  const bidInput = document.getElementById("monitor-bid-id");
+  const intervalSelect = document.getElementById("monitor-interval");
+  const container = document.getElementById("monitor-status-container");
+  
+  if (!monitorJobId) {
+    const bidId = bidInput.value.trim();
+    if (!bidId) {
+      alert("Please enter a Bid ID/Number to monitor.");
+      return;
+    }
+    
+    btn.disabled = true;
+    btn.innerHTML = "<i class='fas fa-spinner fa-spin'></i> Starting...";
+    
+    try {
+      const res = await apiFetch("/api/monitor/start", "POST", {
+        bid_id: bidId,
+        interval: parseInt(intervalSelect.value),
+        gem_url: document.getElementById("tec-gem-url") ? document.getElementById("tec-gem-url").value : ""
+      });
+      
+      if (res.success) {
+        monitorJobId = res.job_id;
+        btn.disabled = false;
+        btn.classList.remove("btn-accent");
+        btn.classList.add("btn-danger");
+        btn.innerHTML = "🛑 Stop Monitor";
+        container.style.display = "block";
+        document.getElementById("mon-bid-id").innerText = bidId;
+        
+        // Start polling status
+        pollMonitorStatus();
+      } else {
+        alert("Failed to start monitor: " + res.error);
+        btn.disabled = false;
+        btn.innerHTML = "📡 Start Monitor";
+      }
+    } catch (err) {
+      alert("Error starting monitor: " + err);
+      btn.disabled = false;
+      btn.innerHTML = "📡 Start Monitor";
+    }
+  } else {
+    // Stop monitor
+    try {
+      await apiFetch(`/api/monitor/stop/${monitorJobId}`, "POST");
+      stopLocalMonitor();
+    } catch (err) {
+      console.error("Error stopping monitor:", err);
+      stopLocalMonitor(); // Force stop locally anyway
+    }
+  }
 }
 
+function stopLocalMonitor() {
+  const btn = document.getElementById("btn-start-monitor");
+  const container = document.getElementById("monitor-status-container");
+  
+  monitorJobId = null;
+  if (monitorTimer) clearTimeout(monitorTimer);
+  
+  btn.classList.remove("btn-danger");
+  btn.classList.add("btn-accent");
+  btn.innerHTML = "📡 Start Monitor";
+}
+
+async function pollMonitorStatus() {
+  if (!monitorJobId) return;
+  
+  try {
+    const res = await apiFetch(`/api/monitor/status/${monitorJobId}`, "GET");
+    if (res.success && res.summary) {
+      const s = res.summary;
+      document.getElementById("mon-current-status").innerText = s.status || "Checking...";
+      document.getElementById("mon-last-check").innerText = s.last_check || "—";
+      
+      const logBox = document.getElementById("monitor-log");
+      if (s.history && s.history.length > 0) {
+        logBox.innerHTML = s.history.map(h => 
+          `<div style="margin-bottom:5px; border-bottom:1px solid #333; padding-bottom:3px">
+            <span style="color:var(--accent)">[${h.time}]</span> 
+            <span style="color:var(--success)">${h.event}</span>: 
+            <strong>${h.status}</strong>
+          </div>`
+        ).join("");
+      } else {
+        logBox.innerHTML = "<div style='color:#666'>Connected. Waiting for updates...</div>";
+      }
+    }
+  } catch (err) {
+    console.error("Monitor poll error:", err);
+  }
+  
+  // Poll every 10 seconds for UI updates
+  if (monitorJobId) {
+    monitorTimer = setTimeout(pollMonitorStatus, 10000);
+  }
+}

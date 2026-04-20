@@ -78,43 +78,50 @@ def _get_chroma_collection():
                 settings=Settings(anonymized_telemetry=False)
             )
 
-        # Switch to Gemini Cloud Embeddings (removes dependence on torch/sentence-transformers)
+        # Switch to Gemini Cloud Embeddings or Local Sentence-Transformers
         api_key = CONFIG.get("gemini_api_key", "")
         rag_conf = CONFIG.get("rag", {}) or {}
-        # Preferred method: use Gemini Cloud Embeddings if an API key is provided.
-        if api_key and api_key != "YOUR_GEMINI_API_KEY_HERE":
+        model_name = rag_conf.get("embedding_model")
+        
+        # Identify if the model name refers to a Google Cloud model
+        google_model_keywords = ["gemini", "text-embedding", "textembedding", "embedding-gecko", "embedding-001"]
+        is_google_model = any(k in (model_name or "").lower() for k in google_model_keywords)
+
+        if api_key and api_key != "YOUR_GEMINI_API_KEY_HERE" and is_google_model:
             # allow override via config (for future-proofing or testing)
-            model_name = rag_conf.get("embedding_model")
-            # default to a known valid model name when not provided
             if not model_name:
-                model_name = "textembedding-gecko-001"
-            # translate any deprecated names automatically
-            if model_name == "models/text-embedding-004":
-                model_name = "textembedding-gecko-001"
+                model_name = "models/text-embedding-004"
+            
+            # Ensure the models/ prefix is present for the Google SDK
+            if not model_name.startswith("models/"):
+                normalized_model = f"models/{model_name}"
+            else:
+                normalized_model = model_name
 
             try:
                 ef = embedding_functions.GoogleGenerativeAiEmbeddingFunction(
                     api_key=api_key,
+                    model_name=normalized_model
+                )
+            except Exception as e:
+                logger.error(f"Failed to initialize Gemini embedding model '{normalized_model}': {e}")
+                logger.error("Falling back to default embedding function; RAG results may be poor.")
+                ef = embedding_functions.DefaultEmbeddingFunction()
+        elif model_name and not is_google_model:
+            # Use local sentence-transformers model specified in rag config
+            try:
+                ef = embedding_functions.SentenceTransformerEmbeddingFunction(
                     model_name=model_name
                 )
             except Exception as e:
-                logger.error(f"Failed to initialize Gemini embedding model '{model_name}': {e}")
-                logger.error("Falling back to default embedding function; RAG results may be poor.")
+                logger.error(f"Failed to load local embedding model '{model_name}': {e}")
                 ef = embedding_functions.DefaultEmbeddingFunction()
         else:
-            # no Gemini key: fall back to local sentence-transformers model specified in rag config
-            local_model = rag_conf.get("embedding_model")
-            if local_model:
-                try:
-                    ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-                        model_name=local_model
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to load local embedding model '{local_model}': {e}")
-                    ef = embedding_functions.DefaultEmbeddingFunction()
-            else:
-                logger.error("No Gemini API key or local embedding model configured; using placeholder embedding function.")
-                ef = embedding_functions.DefaultEmbeddingFunction()
+            # no Gemini key and no specific local model: use default
+            if not api_key or api_key == "YOUR_GEMINI_API_KEY_HERE":
+                logger.warning("No Gemini API key provided; using default embedding function.")
+            ef = embedding_functions.DefaultEmbeddingFunction()
+
 
         _CHROMA_COLLECTION = _CHROMA_CLIENT.get_or_create_collection(
             name="apmd_knowledge_base",

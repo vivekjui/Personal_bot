@@ -2,7 +2,7 @@
 TITLE Smart bot by Vivek Jui
 cd /d "%~dp0"
 echo ==========================================
-echo    Smart bot by Vivek Jui — eOffice AI
+echo    Vivek Jui's personalized assistant
 echo ==========================================
 echo.
 

@@ -63,32 +63,39 @@ DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 
 
 def _normalize_gemini_model_name(model_name: str) -> str:
-    """Normalize Gemini model identifiers to the new Gemini SDK naming conventions."""
+    """Normalize Gemini model identifiers to standard ID format."""
     if not model_name:
-        model_name = DEFAULT_GEMINI_MODEL
+        return DEFAULT_GEMINI_MODEL
     
-    # Normalize input: lowercase and replace spaces/underscores with hyphens
-    model_id = model_name.lower().strip().replace(" ", "-").replace("_", "-")
+    # Normalize input: lowercase and replace spaces/underscores/dots with hyphens
+    model_id = model_name.lower().strip()
     
-    # Remove models/ prefix if present for logic comparison
+    # Remove models/ prefix if present for mapping logic
     if model_id.startswith("models/"):
         model_id = model_id.split("models/", 1)[1]
+    
+    # Replace invalid characters with hyphens
+    model_id = re.sub(r'[^a-z0-9\-\.]', '-', model_id)
+    # Collapse multiple hyphens
+    model_id = re.sub(r'-+', '-', model_id)
     
     # Mapping for specific model identifiers
     mappings = {
         "gemma3-27b": "gemma-3-27b-it",
-        "gemini-3.1-flash-lite": "gemini-3.1-flash-lite-preview",
+        "gemini-3.1-flash-lite": "gemini-2.0-flash", # Use 2.0-flash as stable fallback
         "gemini-1.5-flash": "gemini-2.0-flash",
         "gemini-1.5-flash-latest": "gemini-2.0-flash",
-        "gemini-1.5-pro": "gemini-2.5-pro",
+        "gemini-1.5-pro": "gemini-1.5-pro",
         "gemini-flash-latest": "gemini-2.0-flash",
-        "gemini-3-flash": "gemini-2.0-flash", # Fallback for unsupported Gemini 3 Flash
+        "gemini-2.0-flash-lite": "gemini-2.0-flash-lite-preview-02-05",
     }
     
+    # If the user literally typed "Gemini 3.1 Flash-Lite", it becomes "gemini-3.1-flash-lite"
     if model_id in mappings:
         return mappings[model_id]
         
     return model_id
+
 
 
 def _default_config() -> dict:
@@ -189,7 +196,7 @@ If any sentence is in English, convert it to Hindi unless the source content mus
 - बोलीदाता to be replaced with निविदाकर्ता
 - Use English alternative (in bracket) of complex hindi word / terminology
 - If a highly relevant draft or template is found in the Preferred Style Examples, you MUST follow its exact structure, tone, and phrasing, only substituting the specific details from the additional context provided.
-- Always use Markdown tables for any data comparisons, price lists, or tabular reports.
+- Always use real HTML tables (<table>, <tr>, <td>) for any data comparisons, price lists, or tabular reports. NEVER use Markdown tables.
 
 Additional Context:
 {additional_context}
@@ -199,8 +206,7 @@ Reference Context:
 
 Preferred Style Examples:
 {user_style_examples}
-Check if the first paragraph modified by the user contains firm name as "x" and forget to replace in subsequent paragraph, then correct this. Check for calculations made (correct if wrong calculated). If there is any Figure in Rupees, then same may be written in word in bracket also.
-Check for instruction in additional context. rearrange the noting text as per context. Add contextual topic in appropriate place. Return only the final noting text without subject or sub-heading.
+Check for instruction in additional context. rearrange the noting text as per context. Add contextual topic in appropriate place. Return only the final refined content.
 """
 
 DEFAULT_EMAIL_MASTER_PROMPT = """You are an expert Indian Government official drafting a formal email.
@@ -276,6 +282,30 @@ Provide a helpful, precise answer in {target_language}.
 """
 DEFAULT_QA_SYSTEM_PROMPT = DEFAULT_KNOWHOW_MASTER_PROMPT
 
+DEFAULT_TEC_EVAL_PROMPT = """You are an expert Technical Evaluation Committee (TEC) assistant.
+Analyze the following bidder evaluation data and determine the qualification status for each firm.
+
+USER CRITERIA:
+{criteria}
+
+EVALUATION DATA (Firm: {firm_name}):
+{firm_data}
+
+GUIDELINES:
+1. Determine if the firm is "Qualified" or "Not Qualified" based on the parameters provided.
+2. If NOT Qualified, the reason MUST start with exactly: "Firm is technically not qualified" followed by the specific reasons.
+3. Be objective and professional.
+4. Extract the reason from the tabular summary provided in the firm data.
+5. Provide a brief summary of the evaluation for this firm.
+
+Return the result in JSON format:
+{
+  "is_qualified": bool,
+  "reason": "Firm is technically not qualified ... (if not qualified, otherwise empty)",
+  "summary": "Brief summary of evaluation"
+}
+"""
+
 def load_config() -> dict:
     """Load the main config.json file. If missing in DATA_ROOT, copy from BUNDLE_ROOT.
 
@@ -321,6 +351,9 @@ def load_config() -> dict:
         wrote_back = True
     if "knowhow_master" not in prompts:
         prompts["knowhow_master"] = DEFAULT_KNOWHOW_MASTER_PROMPT
+        wrote_back = True
+    if "tec_evaluation" not in prompts:
+        prompts["tec_evaluation"] = DEFAULT_TEC_EVAL_PROMPT
         wrote_back = True
 
     cfg.setdefault("gemini_api_key", "")
@@ -723,7 +756,7 @@ def _ask_gemini_direct(prompt: str, override_model: str = None) -> str:
     ]
 
     response = client.models.generate_content(
-        model=f"models/{model_name}",
+        model=model_name,
         contents=prompt,
         config=types.GenerateContentConfig(safety_settings=safety_settings)
     )
@@ -767,13 +800,13 @@ def _ask_groq_direct(prompt: str, override_model: str = None) -> str:
     return data["choices"][0]["message"]["content"].strip()
 
 
-def ask_llm(prompt: str, context: str = "") -> str:
+def ask_llm(prompt: str, context: str = "", provider_override: str = None) -> str:
     """
-    Universal LLM call with customizable priority chains based on config.
+    Universal LLM call with customizable priority chains and automatic rotation.
     """
     full_prompt = f"{context}\n\n{prompt}" if context else prompt
     llm_cfg     = CONFIG.get("llm", {})
-    provider    = llm_cfg.get("provider", "gemini")
+    provider    = provider_override if provider_override else llm_cfg.get("provider", "gemini")
 
     def try_gemini():
         logger.debug("LLM: trying Gemini")
@@ -787,24 +820,55 @@ def ask_llm(prompt: str, context: str = "") -> str:
         logger.debug("LLM: trying Gemma 3")
         return _ask_gemini_direct(full_prompt, override_model="gemma3_27b")
         
+    # Execution chain with fallback
+    backends = []
     if provider == "groq":
-        try: return try_groq()
-        except Exception as e:
-            logger.warning(f"Groq failed ({e}). Falling back to Gemini.")
-            return try_gemini()
+        backends = [try_groq, try_gemini, try_gemma]
     elif provider == "gemma3_27b":
-        try: return try_gemma()
-        except Exception as e1:
-            logger.warning(f"Gemma 3 failed ({e1}). Falling back to Gemini.")
-            try: return try_gemini()
-            except Exception as e2:
-                return f"[AI Error: Gemini backends failed]"
-    else: # "gemini" or "auto"
-        try: return try_gemini()
-        except Exception as e1:
-            try: return try_gemma()
-            except Exception as e2:
-                return f"[AI Error: Gemini backends failed]"
+        backends = [try_gemma, try_gemini, try_groq]
+    else: # Default Gemini
+        backends = [try_gemini, try_groq, try_gemma]
+
+    last_error = ""
+    for backend in backends:
+        try:
+            res = backend()
+            if res and not res.startswith("[AI Error"):
+                return res
+            last_error = res
+        except Exception as e:
+            last_error = str(e)
+            logger.warning(f"Backend {backend.__name__} failed: {e}")
+            continue
+            
+    return f"[AI Error: All backends failed. Last error: {last_error}]"
+
+
+def ask_llm_with_review(prompt: str, context: str = "", review_prompt: str = None) -> str:
+    """
+    Agentic Loop: Generates a response with one provider and reviews it with another.
+    """
+    # 1. Generate initial response (Default provider)
+    initial_response = ask_llm(prompt, context)
+    if initial_response.startswith("[AI Error"):
+        return initial_response
+
+    # 2. Review the response (Force Groq for review if possible, or different model)
+    if not review_prompt:
+        review_prompt = (
+            "Review the following AI-generated draft for accuracy, Hindi grammar, and official tone. "
+            "Correct any formatting issues or calculation errors. Return ONLY the final corrected text.\n\n"
+            f"DRAFT:\n{initial_response}"
+        )
+    
+    # Try review with a different provider to catch bias
+    reviewed_response = ask_llm(review_prompt, provider_override="groq")
+    
+    if reviewed_response.startswith("[AI Error"):
+        logger.warning("Review loop failed, returning initial response.")
+        return initial_response
+        
+    return reviewed_response
 
 
 # Backward-compatible alias — all existing modules call ask_gemini(); no changes needed.
@@ -842,12 +906,12 @@ def list_available_models() -> dict:
 
     def is_suitable(model_id):
         mid = model_id.lower()
-        if any(p in mid for p in SUITABLE_PREFIXES):
-            # Exclude guard and whisper models explicitly
-            if any(evil in mid for evil in ["guard", "whisper", "distil"]):
-                return False
-            return True
-        return False
+        # Exclude known non-text or utility models
+        EXCLUDE_KEYWORDS = ["guard", "whisper", "distil", "embedding", "moderation", "tts", "stt"]
+        if any(kw in mid for kw in EXCLUDE_KEYWORDS):
+            return False
+        # Allow everything else as it might be a valid LLM
+        return True
 
     # Google Gemini Models
     try:
@@ -938,7 +1002,12 @@ def extract_text_from_pdf_vision(pdf_path: str) -> str:
         from PIL import Image
 
         client = genai.Client(api_key=gemini_key)
-        model_name = _normalize_gemini_model_name(CONFIG.get("llm", {}).get("gemini_model", DEFAULT_GEMINI_MODEL))
+        
+        # Automatically select the best vision-capable model for this task
+        # This prevents conflict with the main model selected in settings (e.g. if user chose a non-vision model)
+        model_name = "gemini-1.5-flash" 
+        
+        logger.info(f"PDF Vision extraction using dedicated model: {model_name}")
 
         doc = fitz.open(pdf_path)
         for i in range(len(doc)):
@@ -999,23 +1068,64 @@ def extract_text_from_image(image_bytes: bytes, method: str = "standard") -> str
             return text.strip()
             
         else: # method == "vision"
-            gemini_key = CONFIG.get("gemini_api_key", "")
-            if not gemini_key or gemini_key == "YOUR_GEMINI_API_KEY_HERE":
-                return "[Error: No Gemini API Key for Vision extraction]"
-                
-            from google import genai
-            from google.genai import types
-            client = genai.Client(api_key=gemini_key)
-            model_name = _normalize_gemini_model_name(CONFIG.get("llm", {}).get("gemini_model", DEFAULT_GEMINI_MODEL))
+            provider = CONFIG.get("llm", {}).get("provider", "gemini")
             
-            logger.info("Performing Vision LLM extraction via Gemini...")
-            prompt = "Extract all text from this image. Format it cleanly, preserving tables or complex layouts if they exist. Return ONLY the extracted text."
-            image_part = types.Part.from_bytes(data=image_bytes, mime_type='image/png')
-            response = client.models.generate_content(
-                model=model_name,
-                contents=[prompt, image_part]
-            )
-            return response.text.strip()
+            if provider == "groq":
+                groq_key = CONFIG.get("llm", {}).get("groq_api_key", "")
+                if not groq_key:
+                    return "[Error: No Groq API Key for Vision extraction]"
+                
+                import base64
+                import requests
+                from modules.utils import get_requests_proxies
+                
+                # Dedicated vision model for Groq
+                model_name = "llama-3.2-11b-vision-preview"
+                logger.info(f"Performing Vision extraction via Groq using model: {model_name}")
+                
+                base64_image = base64.b64encode(image_bytes).decode('utf-8')
+                url = "https://api.groq.com/openai/v1/chat/completions"
+                headers = {"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"}
+                payload = {
+                    "model": model_name,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "Extract all text from this image exactly as it appears. Preserve tables or layout if needed. Return ONLY the text."},
+                                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
+                            ]
+                        }
+                    ],
+                    "temperature": 0.1
+                }
+                r = requests.post(url, headers=headers, json=payload, timeout=30, proxies=get_requests_proxies())
+                if r.status_code == 200:
+                    return r.json()["choices"][0]["message"]["content"].strip()
+                else:
+                    return f"[Groq Vision Error: {r.status_code}] {r.text}"
+            
+            else: # gemini
+                gemini_key = CONFIG.get("gemini_api_key", "")
+                if not gemini_key or gemini_key == "YOUR_GEMINI_API_KEY_HERE":
+                    return "[Error: No Gemini API Key for Vision extraction]"
+                    
+                from google import genai
+                from google.genai import types
+                client = genai.Client(api_key=gemini_key)
+                
+                # Dedicated vision model for Gemini
+                model_name = "gemini-1.5-flash"
+                
+                logger.info(f"Performing Vision LLM extraction via Gemini using model: {model_name}...")
+                prompt = "Extract all text from this image. Format it cleanly, preserving tables or complex layouts if they exist. Return ONLY the extracted text."
+                image_part = types.Part.from_bytes(data=image_bytes, mime_type='image/png')
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=[prompt, image_part],
+                    config=types.GenerateContentConfig(temperature=0.1)
+                )
+                return response.text.strip()
             
     except Exception as e:
         logger.error(f"Image extraction failed ({method}): {e}")
@@ -1900,6 +2010,14 @@ def run_automation_steps(driver, driver_mode, steps, emit_callback=None):
     import time
     from random import uniform
     for step in steps:
+        # Check for abortion signal if possible
+        try:
+            from modules.tec_eval import is_aborted
+            if is_aborted(getattr(driver, "_current_job_id", None)):
+                raise InterruptedError("Automation stopped by user")
+        except ImportError:
+            pass
+
         stype = step.get("type")
         sel = step.get("selector")
         val = step.get("value")

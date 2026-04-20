@@ -18,10 +18,12 @@ import zipfile
 import io
 import shutil
 import base64
+import threading
 from datetime import datetime
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_file
 from flask_cors import CORS
+import uuid
 
 # --- Python 3.14 + Pydantic v1 (ChromaDB) Monkeypatch ---
 try:
@@ -50,20 +52,19 @@ from modules.eoffice_noting import (generate_noting_text, list_noting_types,
                                    search_standard_notings, translate_noting_llm)
 from modules.doc_processor import process_zip_bid, process_zip_bid_multi, compress_pdf, merge_pdfs, MAX_SIZE_BYTES
 from modules.extract import extract_text_from_file, generate_docx_from_html
-from modules.rag_engine import (ingest_document, ingest_folder, delete_kb_document,
-                                  search_kb, kb_stats, get_all_kb_documents,
-                                  DOC_CATEGORIES, ingest_document_async,
-                                  get_ingest_job_status, get_all_ingest_jobs,
-                                  WATCH_FOLDER, update_document_category, prewarm_vector_db)
-from modules.agent_bid_downloader import automate_agent_bid_download
+# (RAG Engine and Bid Downloader moved to local imports to save startup time)
 
-# --- STARTUP: Initialize Databases ---
-# initialize_database() removed here as it's called on import in database.py
-# and we want to avoid redundant calls that block startup.
-try:
-    prewarm_vector_db()
-except Exception as e:
-    logger.warning(f"Failed to trigger RAG pre-warm: {e}")
+# --- STARTUP: Deferred Initialization ---
+# initialize_database() is handled in database.py background thread
+def deferred_prewarm():
+    try:
+        from modules.rag_engine import prewarm_vector_db
+        prewarm_vector_db()
+    except Exception as e:
+        logger.warning(f"Failed to trigger RAG pre-warm: {e}")
+
+# Delay pre-warm by 5 seconds to let the main UI become responsive first
+threading.Timer(5.0, deferred_prewarm).start()
 
 # ── Initialize ─────────────────────────────────────────────────────────────────
 app = Flask(__name__, 
@@ -103,6 +104,21 @@ def _version_tuple(value: str) -> tuple:
         parts.append(int(part) if part.isdigit() else part.lower())
     return tuple(parts)
 
+
+import uuid
+
+# --- Job Management for Background Tasks ---
+_zip_jobs = {}
+_zip_jobs_lock = threading.Lock()
+
+_tec_analyze_jobs = {}
+_tec_analyze_lock = threading.Lock()
+
+_tec_extract_jobs = {}
+_tec_extract_lock = threading.Lock()
+
+_extraction_jobs = {}
+_extraction_lock = threading.Lock()
 
 def _fetch_remote_version(default_branch: str) -> str:
     from modules.utils import get_requests_proxies
@@ -450,6 +466,40 @@ def api_retrieve_noting():
         logger.error(f"Retrieve Noting error: {e}")
         return jsonify({"error": str(e)}), 500
 
+
+@app.route("/api/noting/refine", methods=["POST"])
+def api_refine_noting():
+    """AI-powered refinement and translation of draft noting."""
+    d = request.json
+    try:
+        from modules.eoffice_noting import refine_and_translate_rich
+        text = d.get("text", "")
+        source_html = d.get("html", "")
+        modifications = d.get("modifications", "")
+        target_lang = d.get("target_lang", "hindi")
+        doc_type = d.get("document_type", "noting")
+        
+        refined_text, refined_html = refine_and_translate_rich(
+            text=text,
+            modifications=modifications,
+            target_lang=target_lang,
+            source_html=source_html,
+            document_type=doc_type
+        )
+        
+        # Check for AI failures that were caught and returned as strings
+        if refined_text.startswith("[AI Error"):
+            return jsonify({"success": False, "error": refined_text}), 200
+
+        return jsonify({
+            "success": True, 
+            "refined_text": refined_text,
+            "refined_html": refined_html
+        })
+    except Exception as e:
+        logger.error(f"Noting refine error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
 @app.route("/api/noting/library/update", methods=["POST"])
 def api_update_library_noting():
     """Update specific library noting fields (text or keyword)."""
@@ -653,33 +703,6 @@ def api_delete_email_library_by_categories():
 
 
 
-@app.route("/api/noting/refine", methods=["POST"])
-def api_refine_noting():
-    """Step 2: Refine and Translate edited noting."""
-    d = request.json
-    template_text = d.get("text", "")
-    template_html = d.get("html", "")
-    modifications = d.get("modifications", "")
-    target_lang = d.get("target_lang", "hindi")
-    document_type = (d.get("document_type") or "noting").strip().lower()
-    
-    if not template_text:
-        return jsonify({"error": "Base text required"}), 400
-        
-    try:
-        from modules.eoffice_noting import refine_and_translate_rich
-        refined_text, refined_html = refine_and_translate_rich(
-            template_text,
-            modifications,
-            target_lang,
-            template_html,
-            document_type=document_type,
-        )
-        return jsonify({"success": True, "refined_text": refined_text, "refined_html": refined_html})
-    except Exception as e:
-        logger.error(f"Refine Noting error: {e}")
-        return jsonify({"error": str(e)}), 500
-
 
 @app.route("/api/noting/translate-high-quality", methods=["POST"])
 def api_translate_high_quality():
@@ -860,7 +883,7 @@ def api_open_chrome():
 # ═══════════════════════════════════════════════════════════════════════════════
 @app.route("/api/documents/process-zip", methods=["POST"])
 def api_process_zip():
-    """Option A: Browser Upload"""
+    """Option A: Browser Upload (Asynchronous)"""
     if "files" not in request.files:
         return jsonify({"error": "No files uploaded"}), 400
     
@@ -874,26 +897,52 @@ def api_process_zip():
             
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    results = []
+    job_id = str(uuid.uuid4())[:8]
+    with _zip_jobs_lock:
+        _zip_jobs[job_id] = {
+            "status": "queued",
+            "progress": 0,
+            "total": len(files),
+            "results": [],
+            "output_dir": str(output_dir.absolute())
+        }
+
+    # Save files to temp location first
+    temp_files = []
     for f in files:
         if not f.filename.endswith(".zip"): continue
-        temp_zip = output_dir / f.filename
-        f.save(str(temp_zip))
-        try:
-            generated = process_zip_bid(temp_zip, output_dir)
-            results.append({"original_zip": f.filename, "output_files": generated})
-        except Exception as e:
-            logger.error(f"Upload process error {f.filename}: {e}")
-            results.append({"original_zip": f.filename, "error": str(e)})
-        finally:
-            if temp_zip.exists(): temp_zip.unlink()
-            
-    return jsonify({"success": True, "results": results, "output_dir": str(output_dir.absolute())})
+        temp_path = DATA_ROOT / "temp" / f.filename
+        temp_path.parent.mkdir(parents=True, exist_ok=True)
+        f.save(str(temp_path))
+        temp_files.append(temp_path)
+
+    def _run_zip_job():
+        with _zip_jobs_lock:
+            _zip_jobs[job_id]["status"] = "running"
+        
+        for i, temp_zip in enumerate(temp_files):
+            try:
+                generated = process_zip_bid(temp_zip, output_dir)
+                with _zip_jobs_lock:
+                    _zip_jobs[job_id]["results"].append({"original_zip": temp_zip.name, "output_files": generated})
+                    _zip_jobs[job_id]["progress"] = i + 1
+            except Exception as e:
+                logger.error(f"Async process error {temp_zip.name}: {e}")
+                with _zip_jobs_lock:
+                    _zip_jobs[job_id]["results"].append({"original_zip": temp_zip.name, "error": str(e)})
+            finally:
+                if temp_zip.exists(): temp_zip.unlink()
+        
+        with _zip_jobs_lock:
+            _zip_jobs[job_id]["status"] = "complete"
+
+    threading.Thread(target=_run_zip_job, daemon=True).start()
+    return jsonify({"success": True, "job_id": job_id, "message": f"Processing {len(files)} files in background."})
 
 
 @app.route("/api/documents/process-zip-local", methods=["POST"])
 def api_process_zip_local():
-    """Option B: Local Folder (In-Place Saving)"""
+    """Option B: Local Folder (Asynchronous)"""
     d = request.json or {}
     folder_path_str = d.get("folder_path")
     if not folder_path_str:
@@ -907,17 +956,45 @@ def api_process_zip_local():
     if not zip_files:
         return jsonify({"success": True, "results": [], "message": "No ZIP files found."})
     
-    results = []
-    for zip_path in zip_files:
-        try:
-            # Save IN-PLACE
-            generated = process_zip_bid(zip_path, input_dir)
-            results.append({"original_zip": zip_path.name, "output_files": generated})
-        except Exception as e:
-            logger.error(f"Local process error {zip_path.name}: {e}")
-            results.append({"original_zip": zip_path.name, "error": str(e)})
-            
-    return jsonify({"success": True, "results": results, "output_dir": str(input_dir.absolute())})
+    job_id = str(uuid.uuid4())[:8]
+    with _zip_jobs_lock:
+        _zip_jobs[job_id] = {
+            "status": "queued",
+            "progress": 0,
+            "total": len(zip_files),
+            "results": [],
+            "output_dir": str(input_dir.absolute())
+        }
+
+    def _run_local_zip_job():
+        with _zip_jobs_lock:
+            _zip_jobs[job_id]["status"] = "running"
+        
+        for i, zip_path in enumerate(zip_files):
+            try:
+                generated = process_zip_bid(zip_path, input_dir)
+                with _zip_jobs_lock:
+                    _zip_jobs[job_id]["results"].append({"original_zip": zip_path.name, "output_files": generated})
+                    _zip_jobs[job_id]["progress"] = i + 1
+            except Exception as e:
+                logger.error(f"Local process error {zip_path.name}: {e}")
+                with _zip_jobs_lock:
+                    _zip_jobs[job_id]["results"].append({"original_zip": zip_path.name, "error": str(e)})
+        
+        with _zip_jobs_lock:
+            _zip_jobs[job_id]["status"] = "complete"
+
+    threading.Thread(target=_run_local_zip_job, daemon=True).start()
+    return jsonify({"success": True, "job_id": job_id, "message": f"Processing {len(zip_files)} files in background."})
+
+
+@app.route("/api/documents/zip-status/<job_id>", methods=["GET"])
+def api_zip_status(job_id):
+    with _zip_jobs_lock:
+        job = _zip_jobs.get(job_id)
+        if not job:
+            return jsonify({"error": "Job not found"}), 404
+        return jsonify(job)
 
 
 @app.route("/api/documents/serve", methods=["GET"])
@@ -1126,16 +1203,19 @@ def api_dashboard_summary():
 # ═══════════════════════════════════════════════════════════════════════════════
 @app.route("/api/kb/stats", methods=["GET"])
 def api_kb_stats():
+    from modules.rag_engine import kb_stats
     return jsonify(kb_stats())
 
 
 @app.route("/api/kb/documents", methods=["GET"])
 def api_kb_docs():
+    from modules.rag_engine import get_all_kb_documents
     return jsonify(get_all_kb_documents())
 
 
 @app.route("/api/kb/categories", methods=["GET"])
 def api_kb_categories():
+    from modules.rag_engine import DOC_CATEGORIES
     return jsonify(DOC_CATEGORIES)
 
 
@@ -1160,6 +1240,7 @@ def api_kb_ingest():
             inbox.mkdir(parents=True, exist_ok=True)
             save_path = inbox / file.filename
             file.save(str(save_path))
+            from modules.rag_engine import ingest_document_async
             job_id = ingest_document_async(str(save_path), category=category, description=description)
             return jsonify({"success": True, "queued": True, "job_id": job_id,
                             "message": f"'{file.filename}' queued for background ingestion (job: {job_id})"})
@@ -1169,6 +1250,7 @@ def api_kb_ingest():
         filepath = d.get("filepath")
         if not filepath:
             return jsonify({"success": False, "error": "Provide 'file' upload or 'filepath' in JSON"}), 400
+        from modules.rag_engine import ingest_document_async
         job_id = ingest_document_async(filepath, category=category, description=description,
                                        force_reingest=d.get("force", False))
         return jsonify({"success": True, "queued": True, "job_id": job_id,
@@ -1181,29 +1263,34 @@ def api_kb_ingest():
 @app.route("/api/kb/ingest/status/<job_id>", methods=["GET"])
 def api_kb_ingest_status(job_id):
     """Poll the status of a background ingest job."""
+    from modules.rag_engine import get_ingest_job_status
     return jsonify(get_ingest_job_status(job_id))
 
 
 @app.route("/api/kb/ingest/jobs", methods=["GET"])
 def api_kb_ingest_jobs():
     """List all background ingest jobs (latest first)."""
+    from modules.rag_engine import get_all_ingest_jobs
     return jsonify(get_all_ingest_jobs())
 
 
 @app.route("/api/kb/watch-folder", methods=["GET"])
 def api_kb_watch_folder():
     """Return path to the auto-ingest watch folder."""
+    from modules.rag_engine import WATCH_FOLDER
     return jsonify({"path": str(WATCH_FOLDER)})
 
 
 @app.route("/api/kb/documents/<doc_id>", methods=["DELETE"])
 def api_kb_docs_delete(doc_id):
+    from modules.rag_engine import delete_kb_document
     success = delete_kb_document(doc_id)
     return jsonify({"success": success})
 
 
 @app.route("/api/kb/documents/<doc_id>", methods=["PUT"])
 def api_kb_docs_update(doc_id):
+    from modules.rag_engine import update_document_category
     data = request.json or {}
     new_category = data.get("category")
     if not new_category:
@@ -1215,6 +1302,7 @@ def api_kb_docs_update(doc_id):
 
 @app.route("/api/kb/ingest-folder", methods=["POST"])
 def api_kb_ingest_folder():
+    from modules.rag_engine import ingest_folder
     d = request.json or {}
     results = ingest_folder(
         folder_path=d["folder_path"],
@@ -1227,6 +1315,7 @@ def api_kb_ingest_folder():
 
 @app.route("/api/kb/search", methods=["POST"])
 def api_kb_search():
+    from modules.rag_engine import search_kb
     d = request.json or {}
     results = search_kb(d.get("query", ""), n_results=d.get("n", 8))
     return jsonify(results)
@@ -1234,6 +1323,7 @@ def api_kb_search():
 
 @app.route("/api/kb/documents/<doc_id>", methods=["DELETE"])
 def api_kb_delete(doc_id):
+    from modules.rag_engine import delete_kb_document
     ok = delete_kb_document(doc_id)
     return jsonify({"success": ok})
 
@@ -1256,34 +1346,52 @@ def api_tec_analyze():
         
     temp_dir = DATA_ROOT / "temp_tec"
     temp_dir.mkdir(parents=True, exist_ok=True)
-    # Use a persistent filename for the session or store in memory?
-    # For now, let's keep it in temp and return a handle.
-    file_id = str(uuid.uuid4())
+    file_id = str(uuid.uuid4())[:8]
     file_path = temp_dir / f"{file_id}{ext}"
     file.save(str(file_path))
     
-    try:
-        from modules.tec_eval import extract_data_from_pdf, extract_data_from_docx, analyze_parameters
-        
-        if ext == ".pdf":
-            df = extract_data_from_pdf(str(file_path))
-        else:
-            df = extract_data_from_docx(str(file_path))
-            
-        if df.empty:
-            return jsonify({"error": "Could not extract tabular data from the document. The PDF may be image-based or the table structure may be heavily broken."}), 400
-            
-        params = analyze_parameters(df)
-        return jsonify({
-            "success": True, 
-            "file_id": file_id,
-            "extension": ext,
-            "parameters": params
-        })
-        
-    except Exception as e:
-        logger.error(f"TEC Analyze error: {e}")
-        return jsonify({"error": str(e)}), 500
+    job_id = f"analyze_{file_id}"
+    with _tec_analyze_lock:
+        _tec_analyze_jobs[job_id] = {"status": "running", "result": None, "error": None}
+
+    def _run_analyze():
+        try:
+            from modules.tec_eval import extract_data_from_pdf, extract_data_from_docx, analyze_parameters
+            if ext == ".pdf":
+                df = extract_data_from_pdf(str(file_path))
+            else:
+                df = extract_data_from_docx(str(file_path))
+                
+            if df.empty:
+                error_msg = "Could not extract tabular data from the document."
+                with _tec_analyze_lock:
+                    _tec_analyze_jobs[job_id] = {"status": "failed", "error": error_msg}
+                return
+                
+            params = analyze_parameters(df)
+            with _tec_analyze_lock:
+                _tec_analyze_jobs[job_id] = {
+                    "status": "complete", 
+                    "result": {
+                        "file_id": file_id,
+                        "extension": ext,
+                        "parameters": params
+                    }
+                }
+        except Exception as e:
+            logger.error(f"Async TEC Analyze error: {e}")
+            with _tec_analyze_lock:
+                _tec_analyze_jobs[job_id] = {"status": "failed", "error": str(e)}
+
+    threading.Thread(target=_run_analyze, daemon=True).start()
+    return jsonify({"success": True, "job_id": job_id})
+
+@app.route("/api/tec/analyze-status/<job_id>", methods=["GET"])
+def api_tec_analyze_status(job_id):
+    with _tec_analyze_lock:
+        job = _tec_analyze_jobs.get(job_id)
+        if not job: return jsonify({"error": "Job not found"}), 404
+        return jsonify(job)
 
 @app.route("/api/tec/extract", methods=["POST"])
 def api_tec_extract():
@@ -1291,49 +1399,62 @@ def api_tec_extract():
     file_id = data.get("file_id")
     ext = data.get("extension")
     criteria = data.get("criteria", {})
+    use_llm = data.get("use_llm", False)
     
     if not file_id:
-        # Fallback to direct upload if needed (though new UI won't use this)
-        if "file" in request.files:
-            file = request.files["file"]
-            ext = Path(file.filename).suffix.lower()
-            file_id = str(uuid.uuid4())
-            file_path = DATA_ROOT / "temp_tec" / f"{file_id}{ext}"
-            file.save(str(file_path))
-        else:
-            return jsonify({"error": "No file session found"}), 400
-    else:
-        file_path = DATA_ROOT / "temp_tec" / f"{file_id}{ext}"
+        return jsonify({"error": "No file session found"}), 400
         
+    file_path = DATA_ROOT / "temp_tec" / f"{file_id}{ext}"
     if not file_path.exists():
         return jsonify({"error": "File session expired or not found"}), 400
         
-    try:
-        from modules.tec_eval import extract_data_from_pdf, extract_data_from_docx, process_evaluations
-        
-        if ext == ".pdf":
-            df = extract_data_from_pdf(str(file_path))
-        else:
-            df = extract_data_from_docx(str(file_path))
-            
-        if df.empty:
-            return jsonify({"error": "Could not extract tabular data. The PDF may be image-based or the table structure may be heavily broken."}), 400
-            
-        eval_results = process_evaluations(df, criteria=criteria)
-        return jsonify({
-            "success": True, 
-            "results": eval_results["results"], 
-            "stats": eval_results["stats"]
-        })
-        
-    except Exception as e:
-        logger.error(f"TEC Extract error: {e}")
-        return jsonify({"error": str(e)}), 500
-    finally:
-        # We don't delete here anymore in case they want to re-run?
-        # Actually, let's delete to keep clean.
-        if file_path.exists():
-            file_path.unlink()
+    job_id = f"extract_{file_id}"
+    with _tec_extract_lock:
+        _tec_extract_jobs[job_id] = {"status": "running", "result": None, "error": None}
+
+    def _run_extract():
+        try:
+            from modules.tec_eval import extract_data_from_pdf, extract_data_from_docx, process_evaluations, process_evaluations_llm
+            if ext == ".pdf":
+                df = extract_data_from_pdf(str(file_path))
+            else:
+                df = extract_data_from_docx(str(file_path))
+                
+            if df.empty:
+                error_msg = "Could not extract tabular data for evaluation."
+                with _tec_extract_lock:
+                    _tec_extract_jobs[job_id] = {"status": "failed", "error": error_msg}
+                return
+
+            if use_llm:
+                eval_results = process_evaluations_llm(df, criteria=criteria)
+            else:
+                eval_results = process_evaluations(df, criteria=criteria)
+
+            with _tec_extract_lock:
+                _tec_extract_jobs[job_id] = {
+                    "status": "complete",
+                    "result": {
+                        "results": eval_results["results"],
+                        "stats": eval_results["stats"]
+                    }
+                }
+        except Exception as e:
+            logger.error(f"Async TEC Extract error: {e}")
+            with _tec_extract_lock:
+                _tec_extract_jobs[job_id] = {"status": "failed", "error": str(e)}
+        finally:
+            if file_path.exists(): file_path.unlink()
+
+    threading.Thread(target=_run_extract, daemon=True).start()
+    return jsonify({"success": True, "job_id": job_id})
+
+@app.route("/api/tec/extract-status/<job_id>", methods=["GET"])
+def api_tec_extract_status(job_id):
+    with _tec_extract_lock:
+        job = _tec_extract_jobs.get(job_id)
+        if not job: return jsonify({"error": "Job not found"}), 404
+        return jsonify(job)
 
 @app.route("/api/tec/launch-chrome", methods=["POST"])
 def api_tec_launch_chrome():
@@ -1379,6 +1500,41 @@ def api_tec_execute():
     except Exception as e:
         logger.error(f"TEC Execute queue error: {e}")
         return jsonify({"error": str(e)}), 500
+
+@app.route("/api/monitor/start", methods=["POST"])
+def api_monitor_start():
+    data = request.json or {}
+    bid_id = data.get("bid_id")
+    interval = int(data.get("interval", 300))
+    gem_url = data.get("gem_url", "")
+    
+    if not bid_id:
+        return jsonify({"success": False, "error": "Bid ID is required"}), 400
+        
+    try:
+        from modules.gem_monitor import GeMMonitor
+        monitor = GeMMonitor(bid_id, gem_url=gem_url, interval=interval)
+        job_id = monitor.start()
+        return jsonify({"success": True, "job_id": job_id})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/api/monitor/stop/<job_id>", methods=["POST"])
+def api_monitor_stop(job_id):
+    from modules.gem_monitor import MONITOR_JOBS
+    monitor = MONITOR_JOBS.get(job_id)
+    if monitor:
+        monitor.stop()
+        return jsonify({"success": True})
+    return jsonify({"success": False, "error": "Job not found"}), 404
+
+@app.route("/api/monitor/status/<job_id>", methods=["GET"])
+def api_monitor_status(job_id):
+    from modules.gem_monitor import get_monitor_summary
+    summary = get_monitor_summary(job_id)
+    if summary:
+        return jsonify({"success": True, "summary": summary})
+    return jsonify({"success": False, "error": "Job not found"}), 404
 
 @app.route("/api/tec/stream/<job_id>", methods=["GET"])
 def api_tec_stream(job_id):
@@ -1525,6 +1681,7 @@ def api_bid_v2_execute():
 @app.route("/api/bid_v2/stream/<job_id>", methods=["GET"])
 def api_bid_v2_stream(job_id):
     from flask import Response
+    from modules.agent_bid_downloader import automate_agent_bid_download
     if job_id not in BID_JOBS:
         return jsonify({"error": "Job ID not found"}), 404
 
@@ -1583,7 +1740,7 @@ def api_save_llm_config():
     cfg_path = utils.CONFIG_PATH
 
     prompt_errors = []
-    for prompt_key in ["noting_master_prompt", "email_master_prompt", "qa_system_prompt", "summarization_master_prompt", "quick_analysis_buttons"]:
+    for prompt_key in ["noting_master_prompt", "email_master_prompt", "qa_system_prompt", "summarization_master_prompt", "tec_evaluation_prompt", "quick_analysis_buttons"]:
         if prompt_key in d:
             try:
                 set_app_setting(prompt_key, d[prompt_key] or "")
@@ -1684,55 +1841,129 @@ def api_extract_text():
     if "file" not in request.files and not image_base64:
         return jsonify({"success": False, "error": "No file or image data provided"}), 400
     
-    file = request.files["file"]
-    method = request.form.get("method", "standard")
-    
-    if not file.filename:
-        return jsonify({"success": False, "error": "Empty filename"}), 400
+    job_id = str(uuid.uuid4())
+    with _extraction_lock:
+        _extraction_jobs[job_id] = {"status": "running", "result": None, "error": None}
 
-    temp_path = None
-    try:
-        from modules.extract import extract_text_from_file
-        if "file" in request.files:
-            file = request.files["file"]
-            if file and file.filename:
-                temp_path = DATA_ROOT / "temp" / file.filename
+    def _run_extraction(jid, file_data=None, img_data=None, mthd="standard", fname=None):
+        try:
+            from modules.extract import extract_text_from_file
+            if file_data:
+                temp_path = DATA_ROOT / "temp" / (fname or "upload.pdf")
                 temp_path.parent.mkdir(parents=True, exist_ok=True)
-                file.save(str(temp_path))
-                res = extract_text_from_file(file_path=temp_path, method=method)
+                with open(temp_path, "wb") as f:
+                    f.write(file_data)
+                res = extract_text_from_file(file_path=temp_path, method=mthd)
+                if temp_path.exists(): temp_path.unlink()
             else:
-                return jsonify({"success": False, "error": "Empty filename"}), 400
-        else:
-            # Handle Base64 (clipboard)
-            if image_base64 and ";" in image_base64 and "base64," in image_base64:
-                image_base64 = image_base64.split("base64,")[1]
-            img_bytes = base64.b64decode(image_base64)
-            res = extract_text_from_file(image_bytes=img_bytes, method=method)
+                res = extract_text_from_file(image_bytes=img_data, method=mthd)
             
-        return jsonify(res)
-    except Exception as e:
-        logger.error(f"API Extraction Error: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        if temp_path and temp_path.exists(): temp_path.unlink()
+            with _extraction_lock:
+                _extraction_jobs[jid]["status"] = "complete"
+                _extraction_jobs[jid]["result"] = res
+        except Exception as e:
+            logger.error(f"Async Extraction Error: {e}")
+            with _extraction_lock:
+                _extraction_jobs[jid]["status"] = "failed"
+                _extraction_jobs[jid]["error"] = str(e)
+
+    if "file" in request.files:
+        f = request.files["file"]
+        threading.Thread(target=_run_extraction, args=(job_id, f.read(), None, method, f.filename)).start()
+    else:
+        if image_base64 and "base64," in image_base64:
+            image_base64 = image_base64.split("base64,")[1]
+        img_bytes = base64.b64decode(image_base64)
+        threading.Thread(target=_run_extraction, args=(job_id, None, img_bytes, method)).start()
+
+    return jsonify({"success": True, "job_id": job_id})
+
+@app.route("/api/extract/status/<job_id>", methods=["GET"])
+def api_extract_status(job_id):
+    with _extraction_lock:
+        if job_id not in _extraction_jobs:
+            return jsonify({"error": "Job not found"}), 404
+        return jsonify(_extraction_jobs[job_id])
 
 @app.route("/api/extract/smart-process", methods=["POST"])
 def api_extract_smart_process():
-    """Handles AI-powered analysis/summarization of extracted text."""
-    try:
-        from modules.extract import analyze_extracted_content
-        data = request.json or {}
-        text = data.get("text", "")
-        context = data.get("context", "")
+    """Handles AI-powered analysis/summarization of extracted text with caching, asynchronously."""
+    data = request.json or {}
+    text = data.get("text", "")
+    context = data.get("context", "")
+    file_hash = data.get("file_hash")
+    
+    if not text.strip():
+        return jsonify({"success": False, "error": "No text provided for analysis"}), 400
+    
+    job_id = str(uuid.uuid4())
+    with _extraction_lock:
+        _extraction_jobs[job_id] = {"status": "running", "result": None, "error": None}
+
+    def _run_smart_process(jid, txt, ctx, hsh):
+        try:
+            from modules.extract import analyze_extracted_content
+            result = analyze_extracted_content(txt, ctx, file_hash=hsh)
+            with _extraction_lock:
+                _extraction_jobs[jid]["status"] = "complete"
+                _extraction_jobs[jid]["result"] = {"processed_text": result}
+        except Exception as e:
+            logger.error(f"Async Smart Process Error: {e}")
+            with _extraction_lock:
+                _extraction_jobs[jid]["status"] = "failed"
+                _extraction_jobs[jid]["error"] = str(e)
+
+    threading.Thread(target=_run_smart_process, args=(job_id, text, context, file_hash)).start()
+    
+    return jsonify({"success": True, "job_id": job_id})
+
+
+@app.route("/api/extract/direct-analyze", methods=["POST"])
+def api_extract_direct_analyze():
+    """Combines extraction and analysis in a single background job."""
+    method = request.form.get("method", "vision")
+    context = request.form.get("context", "")
+    image_base64 = request.form.get("image_base64")
+    
+    if "file" not in request.files and not image_base64:
+        return jsonify({"success": False, "error": "No file or image provided"}), 400
         
-        if not text.strip():
-            return jsonify({"success": False, "error": "No text provided for analysis"}), 400
+    job_id = str(uuid.uuid4())
+    with _extraction_lock:
+        _extraction_jobs[job_id] = {"status": "running", "result": None, "error": None}
+        
+    def _run_direct_job(jid, file_data=None, img_data=None, ctx="", mthd="vision", fname=None):
+        try:
+            from modules.extract import analyze_file_directly
+            if file_data:
+                temp_path = DATA_ROOT / "temp" / (fname or "direct_upload.pdf")
+                temp_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(temp_path, "wb") as f:
+                    f.write(file_data)
+                result = analyze_file_directly(file_path=temp_path, context=ctx, method=mthd)
+                if temp_path.exists(): temp_path.unlink()
+            else:
+                result = analyze_file_directly(image_bytes=img_data, context=ctx, method=mthd)
             
-        result = analyze_extracted_content(text, context)
-        return jsonify({"success": True, "processed_text": result})
-    except Exception as e:
-        logger.error(f"Smart Process Error: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+            with _extraction_lock:
+                _extraction_jobs[jid]["status"] = "complete"
+                _extraction_jobs[jid]["result"] = {"processed_text": result, "direct": True}
+        except Exception as e:
+            logger.error(f"Direct Analysis Job Error: {e}")
+            with _extraction_lock:
+                _extraction_jobs[jid]["status"] = "failed"
+                _extraction_jobs[jid]["error"] = str(e)
+                
+    if "file" in request.files:
+        f = request.files["file"]
+        threading.Thread(target=_run_direct_job, args=(job_id, f.read(), None, context, method, f.filename)).start()
+    else:
+        if image_base64 and "base64," in image_base64:
+            image_base64 = image_base64.split("base64,")[1]
+        img_bytes = base64.b64decode(image_base64)
+        threading.Thread(target=_run_direct_job, args=(job_id, None, img_bytes, context, method)).start()
+        
+    return jsonify({"success": True, "job_id": job_id})
 
 @app.route("/api/extract/download", methods=["POST"])
 def api_extract_download():
@@ -1743,6 +1974,7 @@ def api_extract_download():
         return jsonify({"success": False, "error": "No content to download"}), 400
 
     output = io.BytesIO()
+    from modules.extract import generate_docx_from_html
     generate_docx_from_html(html, output)
     output.seek(0)
     
@@ -1775,6 +2007,7 @@ def api_extract_download_to_desktop():
         # Save to file
         with open(target_file, "wb") as f:
             output = io.BytesIO()
+            from modules.extract import generate_docx_from_html
             generate_docx_from_html(html, output)
             f.write(output.getvalue())
             
@@ -1830,6 +2063,7 @@ def api_process_zip_multi():
         # Auto-ingest into KB if possible
         for gen_file in res.get("generated_files", []):
             full_p = target_dir / gen_file
+            from modules.rag_engine import ingest_document_async
             ingest_document_async(str(full_p), category="Bid Document")
             
         return jsonify({"success": True, **res})

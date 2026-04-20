@@ -13,7 +13,7 @@ import re
 import json
 from difflib import SequenceMatcher
 from datetime import datetime
-from html import unescape
+from html import escape, unescape
 from pathlib import Path
 from modules.utils import (
     CONFIG,
@@ -26,7 +26,7 @@ from modules.utils import (
     STANDARD_LIBRARY_PATH,
     ask_gemini,
     get_case_folder,
-    create_docx_from_text,
+    create_docx_from_html,
     sanitize_filename,
     today_str,
 )
@@ -198,7 +198,7 @@ def get_noting_learning_instructions(limit: int = 12) -> str:
     if not lines:
         return ""
 
-    return "\n=== USER TERMINOLOGY PREFERENCES ===\nApply these learned wording preferences whenever relevant:\n" + "\n".join(lines) + "\n"
+    return "\n<learned_terminology_preferences>\nApply these wording preferences ONLY to the refined text:\n" + "\n".join(lines) + "\n</learned_terminology_preferences>\n"
 
 
 def _score_style_noting(item: dict, query_words: set[str]) -> int:
@@ -255,13 +255,14 @@ def get_user_style_summary(context: str = "", limit: int = 12) -> str:
     ][:3]
 
     lines = [
-        "=== LIBRARY STYLE LEARNING ===",
-        "Learn the user's drafting language and writing pattern from the noting library.",
+        "<library_style_learning_meta>",
+        "Observe the user's drafting language and writing pattern from the noting library.",
         preferred_language,
         "Prefer concise, official file-note paragraphs with procurement terminology aligned to the library."
     ]
     for phrase in repeated_phrases:
         lines.append(f"- Reuse phrasing patterns similar to: {phrase}")
+    lines.append("</library_style_learning_meta>")
 
     return "\n" + "\n".join(lines) + "\n"
 
@@ -276,9 +277,10 @@ def _build_refinement_style_context(text: str = "", modifications: str = "", sou
     try:
         examples = get_user_style_examples(limit=4, context=style_context)
         if examples:
-            user_style_examples = "\n=== नोटिंग लाइब्रेरी से सीखी गई उपयोगकर्ता की लेखन शैली (Style Examples from Library) ===\n"
+            user_style_examples = "\n<style_examples_for_reference_only>\n"
             for i, ex in enumerate(examples):
-                user_style_examples += f"उदाहरण {i+1}:\n{ex}\n---\n"
+                user_style_examples += f"Example {i+1}:\n{ex}\n---\n"
+            user_style_examples += "</style_examples_for_reference_only>\n"
     except Exception:
         pass
 
@@ -443,7 +445,7 @@ def save_noting_to_docx(
     output_dir = get_case_folder(case_id, "Generated")
     safe_name  = filename or sanitize_filename(f"Noting_{noting_type}_{today_str()}.docx")
     output_path = str(output_dir / safe_name)
-    create_docx_from_text(text, output_path, title="")
+    create_docx_from_html(text, output_path, title="")
     logger.info(f"Noting saved: {output_path}")
     return output_path
 
@@ -846,6 +848,31 @@ def _extract_table_blocks(html: str) -> list[str]:
     return TABLE_BLOCK_RE.findall(html or "")
 
 
+def _escape_html_cell(value: str) -> str:
+    cleaned = (value or "").strip()
+    return escape(cleaned, quote=False) if cleaned else "&nbsp;"
+
+
+def _plain_text_to_html_fragment(text: str) -> str:
+    lines = [line.strip() for line in (text or "").replace("\r", "").splitlines()]
+    blocks: list[str] = []
+    paragraph: list[str] = []
+
+    def flush_paragraph() -> None:
+        if paragraph:
+            blocks.append("<p>" + "<br>".join(escape(line, quote=False) for line in paragraph) + "</p>")
+            paragraph.clear()
+
+    for line in lines:
+        if not line:
+            flush_paragraph()
+            continue
+        paragraph.append(line)
+
+    flush_paragraph()
+    return "\n".join(blocks).strip()
+
+
 def _is_markdown_table_block(lines: list[str]) -> bool:
     if len(lines) < 2:
         return False
@@ -853,6 +880,70 @@ def _is_markdown_table_block(lines: list[str]) -> bool:
         return False
     separator = lines[1].strip().strip("|").replace(":", "").replace("-", "").replace(" ", "")
     return separator == ""
+
+
+def _is_table_separator_line(line: str) -> bool:
+    stripped = (line or "").strip()
+    if not stripped:
+        return False
+    if not any(ch in stripped for ch in "-="):
+        return False
+    return re.sub(r"[\s|:+\-=]", "", stripped) == ""
+
+
+def _split_plain_table_row(line: str) -> list[str]:
+    stripped = (line or "").strip()
+    if not stripped or _is_table_separator_line(stripped):
+        return []
+
+    if "\t" in stripped:
+        cells = [cell.strip() for cell in stripped.split("\t")]
+    elif "|" in stripped:
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+    elif re.search(r" {2,}", stripped):
+        cells = [cell.strip() for cell in re.split(r" {2,}", stripped)]
+    else:
+        return []
+
+    while cells and not cells[0]:
+        cells.pop(0)
+    while cells and not cells[-1]:
+        cells.pop()
+    return cells
+
+
+def _plain_table_rows_from_block(block: list[str]) -> list[list[str]]:
+    rows = [_split_plain_table_row(line) for line in block if not _is_table_separator_line(line)]
+    rows = [row for row in rows if row]
+    if len(rows) < 2:
+        return []
+
+    column_counts: dict[int, int] = {}
+    for row in rows:
+        column_counts[len(row)] = column_counts.get(len(row), 0) + 1
+    expected_cols = max(column_counts, key=column_counts.get)
+    if expected_cols < 2:
+        return []
+
+    normalized_rows: list[list[str]] = []
+    for row in rows:
+        if len(row) == expected_cols:
+            normalized_rows.append(row)
+        elif len(row) > expected_cols:
+            normalized_rows.append(row[: expected_cols - 1] + [" ".join(row[expected_cols - 1:])])
+        else:
+            normalized_rows.append(row + [""] * (expected_cols - len(row)))
+    return normalized_rows
+
+
+def _rows_to_html_table(rows: list[list[str]], first_row_header: bool = True) -> str:
+    rendered_rows: list[str] = []
+    for idx, cells in enumerate(rows):
+        tag = "th" if first_row_header and idx == 0 else "td"
+        rendered_rows.append(
+            "<tr>" + "".join(f"<{tag}>{_escape_html_cell(cell)}</{tag}>" for cell in cells) + "</tr>"
+        )
+    return "<table><tbody>" + "".join(rendered_rows) + "</tbody></table>"
 
 
 def _convert_markdown_tables_to_html(text: str) -> str:
@@ -876,14 +967,94 @@ def _convert_markdown_tables_to_html(text: str) -> str:
                         continue
                     cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
                     tag = "th" if idx == 0 else "td"
-                    rows.append("<tr>" + "".join(f"<{tag}>{cell or '&nbsp;'}</{tag}>" for cell in cells) + "</tr>")
+                    rows.append("<tr>" + "".join(f"<{tag}>{_escape_html_cell(cell)}</{tag}>" for cell in cells) + "</tr>")
                 out.append("<table><tbody>" + "".join(rows) + "</tbody></table>")
                 i = j
                 continue
         if lines[i].strip():
-            out.append("<p>" + lines[i].strip() + "</p>")
+            out.append("<p>" + escape(lines[i].strip(), quote=False) + "</p>")
         i += 1
     return "\n".join(out).strip()
+
+
+def _convert_plain_text_tables_to_html(text: str) -> str:
+    raw = _strip_markdown_fences(text)
+    if "<table" in raw.lower():
+        return raw
+
+    lines = [line.rstrip() for line in raw.replace("\r", "").splitlines()]
+    out: list[str] = []
+    paragraph: list[str] = []
+    i = 0
+
+    def flush_paragraph() -> None:
+        if paragraph:
+            out.append("<p>" + "<br>".join(escape(line, quote=False) for line in paragraph) + "</p>")
+            paragraph.clear()
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        if not stripped:
+            flush_paragraph()
+            i += 1
+            continue
+
+        if "|" in stripped:
+            block: list[str] = []
+            j = i
+            while j < len(lines) and "|" in lines[j]:
+                block.append(lines[j].strip())
+                j += 1
+            if _is_markdown_table_block(block):
+                flush_paragraph()
+                out.append(_convert_markdown_tables_to_html("\n".join(block)))
+                i = j
+                continue
+
+        if _split_plain_table_row(stripped):
+            block = []
+            j = i
+            while j < len(lines):
+                current = lines[j].strip()
+                if not current:
+                    break
+                if _split_plain_table_row(current) or _is_table_separator_line(current):
+                    block.append(current)
+                    j += 1
+                    continue
+                break
+
+            rows = _plain_table_rows_from_block(block)
+            if rows:
+                flush_paragraph()
+                out.append(_rows_to_html_table(rows, first_row_header=True))
+                i = j
+                continue
+
+        paragraph.append(stripped)
+        i += 1
+
+    flush_paragraph()
+    return "\n".join(out).strip()
+
+
+def _coerce_table_like_source_to_html(text: str, source_html: str) -> str:
+    if _contains_table_html(source_html):
+        return source_html
+
+    candidates = []
+    plain_from_html = _html_to_plain_text(source_html) if source_html else ""
+    for candidate in (plain_from_html, text):
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
+    for candidate in candidates:
+        converted = _convert_plain_text_tables_to_html(candidate)
+        if _contains_table_html(converted):
+            return converted
+
+    return source_html or _plain_text_to_html_fragment(text)
 
 
 def _reconstruct_table_html(source_html: str, refined_html: str, modifications: str, target_lang: str) -> str:
@@ -998,6 +1169,11 @@ Additional Context/Instructions:
    - NEVER use the phrase: **"कृपया आवश्यक संज्ञान लें। (GFR के अनुरूप कार्यवाही सुनिश्चित करें)"**.
    - NEVER use the word **"प्रकरण" (prakaran)**. Use "मामले", "विषय", or similar formal terms instead.
 
+**CRITICAL OUTPUT RULE:**
+- DO NOT include any headers like "=== ... ===" or meta-tags in your output.
+- DO NOT return the "Style Examples" or "Learning Instructions" back to me.
+- Return ONLY the final refined and translated noting.
+
 Provide ONLY the final refined Hindi text.
 
 Refined Noting (Hindi):
@@ -1011,7 +1187,9 @@ Refined Noting (Hindi):
             style_summary=style_summary,
             learning_instructions=learning_instructions
         )
-        result = ask_gemini(prompt)
+        # Inject master prompt rules even for plain refinement
+        full_prompt = f"{prompt}\n\nGLOBAL RULES:\n{get_noting_master_prompt()}"
+        result = ask_gemini(full_prompt)
         return apply_learned_noting_patterns(result.strip())
     except Exception as e:
         logger.error(f"Refinement failed: {e}")
@@ -1026,9 +1204,17 @@ def refine_and_translate_rich(
     document_type: str = "noting",
 ) -> tuple[str, str]:
     source_html = (source_html or "").strip()
-    if not _contains_table_html(source_html):
+    normalized_source_html = _coerce_table_like_source_to_html(text, source_html)
+    
+    # If source has table, OR user explicitly asks for a table/grid/etc, use the rich path
+    has_table = _contains_table_html(normalized_source_html)
+    wants_table = any(x in (modifications or "").lower() for x in ["table", "grid", "column", "row", "list", "tabular", "excel", "comparison", "price", "statement"])
+    
+    if not has_table and not wants_table:
         refined_text = refine_and_translate(text, modifications, target_lang, document_type=document_type)
         return refined_text, ""
+
+    source_html = normalized_source_html
 
     user_style_examples, style_summary, learning_instructions = _build_refinement_style_context(
         modifications=modifications,
@@ -1050,7 +1236,8 @@ def refine_and_translate_rich(
             learning_instructions=learning_instructions,
         )
     else:
-        prompt = f"""You are an expert Indian Government Official (Dealing Hand) at GSI.
+        logger.info(f"Refining {document_type} in {target_lang}. Source HTML len: {len(source_html)}, Text len: {len(text)}")
+        prompt = f"""You are an expert Government Official and Rajbhasha Adhikari. Refine the following draft.
 I have a draft noting in HTML. It contains one or more tables that MUST remain as tables.
 
 Draft/Template HTML:
@@ -1063,6 +1250,9 @@ Additional Context/Instructions:
 {style_summary}
 {learning_instructions}
 
+GLOBAL NOTING GUIDELINES (RESPECT THESE):
+{get_noting_master_prompt()}
+
 CORE RULES:
 1. Return ONLY valid HTML fragment. No markdown fences, no explanations.
 2. Preserve all table content as real HTML tables using <table>, <tr>, <td>, <th>.
@@ -1071,16 +1261,23 @@ CORE RULES:
 5. Use {language_instruction}.
 6. Remove any Subject/विषय line if present.
 7. Finalize the noting with the exact phrase "फाइल आपके अवलोकनार्थ प्रस्तुत है ।" if the output is Hindi.
+
+**TASK:**
+- If the instruction is to create or convert content into a table, you MUST generate a valid HTML <table>.
+- If the source content is plain text but the user wants a table/grid, extract the entities/values and put them in a table.
+- Return ONLY the final refined noting as an HTML fragment.
 """
 
     try:
-        refined_html = _normalize_html_fragment(ask_gemini(prompt))
+        raw_response = ask_gemini(prompt)
+        logger.debug(f"AI Response received ({len(raw_response)} bytes)")
+        refined_html = _normalize_html_fragment(raw_response)
     except Exception as e:
         logger.error(f"HTML refinement failed: {e}")
         return text, source_html
 
     if not _contains_table_html(refined_html):
-        converted = _convert_markdown_tables_to_html(refined_html)
+        converted = _convert_plain_text_tables_to_html(refined_html)
         refined_html = _normalize_html_fragment(converted)
 
     if not _contains_table_html(refined_html):

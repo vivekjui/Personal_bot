@@ -15,6 +15,7 @@ from modules.utils import (
     DEFAULT_NOTING_MASTER_PROMPT,
     DEFAULT_QA_SYSTEM_PROMPT,
     DEFAULT_SUMMARIZATION_MASTER_PROMPT,
+    DEFAULT_TEC_EVAL_PROMPT,
     LEGACY_LLM_PROMPT_VALUES,
     logger,
 )
@@ -71,6 +72,7 @@ PROMPT_SETTINGS_DEFAULTS = {
     "email_master_prompt": DEFAULT_EMAIL_MASTER_PROMPT,
     "qa_system_prompt": DEFAULT_QA_SYSTEM_PROMPT,
     "summarization_master_prompt": DEFAULT_SUMMARIZATION_MASTER_PROMPT,
+    "tec_evaluation_prompt": DEFAULT_TEC_EVAL_PROMPT,
     "quick_analysis_buttons": json.dumps([
         {"id": "mom", "label": "📝 MOM Summary", "prompt": "Summarize this Minute of Meeting (MOM) highlighting key action items, owners, and deadlines."},
         {"id": "tech", "label": "📊 Tech Eval Audit", "prompt": "Analyze this Technical Evaluation Report. List all firms/vendors and clearly state their Qualification or Disqualification status with brief reasons."},
@@ -216,12 +218,28 @@ def _create_core_schema() -> None:
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS autonomous_tasks (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_type       TEXT NOT NULL,
+            target_id       TEXT,
+            payload         TEXT,
+            status          TEXT DEFAULT 'Pending',
+            result          TEXT,
+            error           TEXT,
+            retry_count     INTEGER DEFAULT 0,
+            created_at      TEXT DEFAULT (datetime('now','localtime')),
+            updated_at      TEXT DEFAULT (datetime('now','localtime'))
+        )
+    """)
+
     # Performance Indexes
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_security_deposits_case ON security_deposits(case_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_reminders_case ON reminders(case_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_case ON documents(case_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_bills_case ON bills(case_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_email_log_case ON email_log(case_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_autonomous_tasks_status ON autonomous_tasks(status)")
 
     conn.commit()
     conn.close()
@@ -1036,8 +1054,48 @@ def delete_emails_by_categories(categories: list) -> int:
         conn.close()
 
 
-# ── Initialize on import ────────────────────────────────────────────────────────
-initialize_database()
+# ── Initialize on background thread to avoid blocking main application startup ──────
+threading.Thread(target=initialize_database, daemon=True).start()
 
 if __name__ == "__main__":
+    # If run directly, we might want it to be synchronous for CLI usage
+    initialize_database()
     print("Database diagnostics complete.")
+# ── Autonomous Tasks ──────────────────────────────────────────────────────────
+def add_autonomous_task(task_type: str, target_id: str = None, payload: dict = None) -> int:
+    conn = get_connection("core")
+    cur = conn.execute("""
+        INSERT INTO autonomous_tasks (task_type, target_id, payload)
+        VALUES (?, ?, ?)
+    """, (task_type, target_id, json.dumps(payload) if payload else None))
+    conn.commit()
+    row_id = cur.lastrowid
+    conn.close()
+    return row_id
+
+def get_pending_tasks(limit: int = 10) -> list:
+    conn = get_connection("core")
+    rows = conn.execute("""
+        SELECT * FROM autonomous_tasks 
+        WHERE status IN ('Pending', 'Retrying') 
+        ORDER BY created_at ASC LIMIT ?
+    """, (limit,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def update_task_status(task_id: int, status: str, result: str = None, error: str = None, retry: bool = False) -> None:
+    conn = get_connection("core")
+    if retry:
+        conn.execute("""
+            UPDATE autonomous_tasks 
+            SET status = ?, result = ?, error = ?, retry_count = retry_count + 1, updated_at = datetime('now','localtime')
+            WHERE id = ?
+        """, (status, result, error, task_id))
+    else:
+        conn.execute("""
+            UPDATE autonomous_tasks 
+            SET status = ?, result = ?, error = ?, updated_at = datetime('now','localtime')
+            WHERE id = ?
+        """, (status, result, error, task_id))
+    conn.commit()
+    conn.close()
