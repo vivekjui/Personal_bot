@@ -3,7 +3,7 @@ Noting Bot - Flask Web Dashboard Backend
 All API routes for the web UI.
 """
 
-VERSION = "1.03"
+VERSION = "1.07"
 GITHUB_REPO = "vivekjui/Personal_bot"
 GITHUB_REPO_LABEL = "Personal Bot"
 
@@ -52,6 +52,8 @@ from modules.eoffice_noting import (generate_noting_text, list_noting_types,
                                    search_standard_notings, translate_noting_llm)
 from modules.doc_processor import process_zip_bid, process_zip_bid_multi, compress_pdf, merge_pdfs, MAX_SIZE_BYTES
 from modules.extract import extract_text_from_file, generate_docx_from_html
+from modules.tec_minutes import (generate_tec_draft_prompt, create_tec_docx, 
+                                load_learned_patterns, extract_entities_from_raw_text)
 # (RAG Engine and Bid Downloader moved to local imports to save startup time)
 
 # --- STARTUP: Deferred Initialization ---
@@ -909,32 +911,50 @@ def api_process_zip():
 
     # Save files to temp location first
     temp_files = []
+    temp_dir = DATA_ROOT / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    
+    from modules.utils import sanitize_filename
     for f in files:
         if not f.filename.endswith(".zip"): continue
-        temp_path = DATA_ROOT / "temp" / f.filename
-        temp_path.parent.mkdir(parents=True, exist_ok=True)
+        # Sanitize filename
+        safe_name = sanitize_filename(f.filename)
+        temp_path = temp_dir / safe_name
         f.save(str(temp_path))
         temp_files.append(temp_path)
 
     def _run_zip_job():
-        with _zip_jobs_lock:
-            _zip_jobs[job_id]["status"] = "running"
-        
-        for i, temp_zip in enumerate(temp_files):
-            try:
-                generated = process_zip_bid(temp_zip, output_dir)
-                with _zip_jobs_lock:
-                    _zip_jobs[job_id]["results"].append({"original_zip": temp_zip.name, "output_files": generated})
-                    _zip_jobs[job_id]["progress"] = i + 1
-            except Exception as e:
-                logger.error(f"Async process error {temp_zip.name}: {e}")
-                with _zip_jobs_lock:
-                    _zip_jobs[job_id]["results"].append({"original_zip": temp_zip.name, "error": str(e)})
-            finally:
-                if temp_zip.exists(): temp_zip.unlink()
-        
-        with _zip_jobs_lock:
-            _zip_jobs[job_id]["status"] = "complete"
+        try:
+            with _zip_jobs_lock:
+                _zip_jobs[job_id]["status"] = "running"
+            
+            for i, temp_zip in enumerate(temp_files):
+                try:
+                    generated = process_zip_bid(temp_zip, output_dir)
+                    with _zip_jobs_lock:
+                        _zip_jobs[job_id]["results"].append({"original_zip": temp_zip.name, "output_files": generated})
+                        _zip_jobs[job_id]["progress"] = i + 1
+                except Exception as e:
+                    import traceback
+                    logger.error(f"Async process error {temp_zip.name}: {e}")
+                    logger.error(traceback.format_exc())
+                    with _zip_jobs_lock:
+                        _zip_jobs[job_id]["results"].append({"original_zip": temp_zip.name, "error": str(e)})
+        except Exception as catastrophic:
+            import traceback
+            logger.error(f"Catastrophic failure in _run_zip_job: {catastrophic}")
+            logger.error(traceback.format_exc())
+            with _zip_jobs_lock:
+                _zip_jobs[job_id]["status"] = "failed"
+                _zip_jobs[job_id]["error"] = str(catastrophic)
+        finally:
+            for temp_zip in temp_files:
+                if temp_zip.exists(): 
+                    try: temp_zip.unlink()
+                    except: pass
+            with _zip_jobs_lock:
+                if _zip_jobs[job_id]["status"] != "failed":
+                    _zip_jobs[job_id]["status"] = "complete"
 
     threading.Thread(target=_run_zip_job, daemon=True).start()
     return jsonify({"success": True, "job_id": job_id, "message": f"Processing {len(files)} files in background."})
@@ -967,22 +987,33 @@ def api_process_zip_local():
         }
 
     def _run_local_zip_job():
-        with _zip_jobs_lock:
-            _zip_jobs[job_id]["status"] = "running"
-        
-        for i, zip_path in enumerate(zip_files):
-            try:
-                generated = process_zip_bid(zip_path, input_dir)
-                with _zip_jobs_lock:
-                    _zip_jobs[job_id]["results"].append({"original_zip": zip_path.name, "output_files": generated})
-                    _zip_jobs[job_id]["progress"] = i + 1
-            except Exception as e:
-                logger.error(f"Local process error {zip_path.name}: {e}")
-                with _zip_jobs_lock:
-                    _zip_jobs[job_id]["results"].append({"original_zip": zip_path.name, "error": str(e)})
-        
-        with _zip_jobs_lock:
-            _zip_jobs[job_id]["status"] = "complete"
+        try:
+            with _zip_jobs_lock:
+                _zip_jobs[job_id]["status"] = "running"
+            
+            for i, zip_path in enumerate(zip_files):
+                try:
+                    generated = process_zip_bid(zip_path, input_dir)
+                    with _zip_jobs_lock:
+                        _zip_jobs[job_id]["results"].append({"original_zip": zip_path.name, "output_files": generated})
+                        _zip_jobs[job_id]["progress"] = i + 1
+                except Exception as e:
+                    import traceback
+                    logger.error(f"Local process error {zip_path.name}: {e}")
+                    logger.error(traceback.format_exc())
+                    with _zip_jobs_lock:
+                        _zip_jobs[job_id]["results"].append({"original_zip": zip_path.name, "error": str(e)})
+        except Exception as catastrophic:
+            import traceback
+            logger.error(f"Catastrophic failure in _run_local_zip_job: {catastrophic}")
+            logger.error(traceback.format_exc())
+            with _zip_jobs_lock:
+                _zip_jobs[job_id]["status"] = "failed"
+                _zip_jobs[job_id]["error"] = str(catastrophic)
+        finally:
+            with _zip_jobs_lock:
+                if _zip_jobs[job_id]["status"] != "failed":
+                    _zip_jobs[job_id]["status"] = "complete"
 
     threading.Thread(target=_run_local_zip_job, daemon=True).start()
     return jsonify({"success": True, "job_id": job_id, "message": f"Processing {len(zip_files)} files in background."})
@@ -994,8 +1025,68 @@ def api_zip_status(job_id):
         job = _zip_jobs.get(job_id)
         if not job:
             return jsonify({"error": "Job not found"}), 404
-        return jsonify(job)
+        return jsonify({"success": True, **job})
 
+
+@app.route("/api/tec/minutes/draft", methods=["POST"])
+def api_tec_minutes_draft():
+    """Draft TEC minutes using learned patterns and raw input."""
+    d = request.json or {}
+    tec_type = d.get("tec_type", "Technical")
+    category = d.get("category", "General")
+    indenting_member = d.get("indenting_member", ".....")
+    raw_input = d.get("raw_input", "").strip()
+    
+    if not raw_input:
+        return jsonify({"error": "No input provided"}), 400
+        
+    try:
+        from modules.rag_pro import get_llm_client
+        llm = get_llm_client()
+        
+        learned_kb = load_learned_patterns()
+        # Ensure indenting member is passed to the prompt
+        prompt = generate_tec_draft_prompt(tec_type, category, raw_input, learned_kb, indenting_member=indenting_member)
+        
+        # Simple extraction for pre-filling
+        entities = extract_entities_from_raw_text(raw_input)
+        
+        # Generation
+        response = llm.generate_content(prompt)
+        draft_text = response.text
+        
+        # Convert plain text draft to basic HTML for the Quill editor
+        draft_html = draft_text.replace('\n', '<br>')
+        
+        return jsonify({
+            "success": True, 
+            "draft_html": draft_html,
+            "entities": entities
+        })
+    except Exception as e:
+        logger.error(f"TEC drafting error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/tec/minutes/download", methods=["POST"])
+def api_tec_minutes_download():
+    """Download the drafted minutes as a Legal-sized DOCX."""
+    d = request.json or {}
+    content_html = d.get("html", "")
+    title = d.get("title", "TEC Minutes")
+    
+    if not content_html:
+        return jsonify({"error": "No content provided"}), 400
+        
+    try:
+        out_path = DATA_ROOT / "temp" / f"TEC_Minutes_{datetime.now().strftime('%H%M%S')}.docx"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        create_tec_docx(str(out_path), content_html, title=title)
+        
+        return send_file(str(out_path), as_attachment=True, download_name=f"{title.replace(' ', '_')}.docx")
+    except Exception as e:
+        logger.error(f"TEC download error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/documents/serve", methods=["GET"])
 def api_serve_doc():
@@ -1743,7 +1834,9 @@ def api_save_llm_config():
     for prompt_key in ["noting_master_prompt", "email_master_prompt", "qa_system_prompt", "summarization_master_prompt", "tec_evaluation_prompt", "quick_analysis_buttons"]:
         if prompt_key in d:
             try:
-                set_app_setting(prompt_key, d[prompt_key] or "")
+                val = d[prompt_key] or ""
+                set_app_setting(prompt_key, val)
+                logger.info(f"Setting updated: {prompt_key} (len: {len(val)})")
             except Exception as e:
                 prompt_errors.append(f"{prompt_key}: {e}")
 

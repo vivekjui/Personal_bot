@@ -309,6 +309,31 @@ document.addEventListener("DOMContentLoaded", () => {
     window.extractQuill.clipboard.addMatcher('TABLE', (node, delta) => delta);
   }
 
+  // Initialize TEC Minutes Editor
+  if (document.getElementById("tec-minutes-editor")) {
+    const quillTecModules = {
+      toolbar: [
+        [{ 'header': [1, 2, 3, false] }],
+        ['bold', 'italic', 'underline', 'strike'],
+        [{ 'color': [] }, { 'background': [] }],
+        [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+        [{ 'align': [] }],
+        ['clean']
+      ]
+    };
+
+    addTableBetterSupport(quillTecModules, {
+        language: 'en_US',
+        toolbarTable: true,
+        menus: ['column', 'row', 'insert', 'merge', 'unmerge', 'deleteTable', 'style'],
+      }, () => {
+      quillTecModules.toolbar.push(['table-better']);
+    });
+
+    window.tecMinutesQuill = createQuillWithFallback('#tec-minutes-editor', quillTecModules);
+    window.tecMinutesQuill.clipboard.addMatcher('TABLE', (node, delta) => delta);
+  }
+
   // Global Clipboard Listener for Images (for Extract Page)
   document.addEventListener('paste', handleGlobalPaste);
 
@@ -1433,7 +1458,7 @@ async function pollZipStatus(jobId, el) {
   const interval = setInterval(async () => {
     try {
       const res = await apiFetch(`/api/documents/zip-status/${jobId}`);
-      if (res.status === "complete") {
+      if (res.status === "complete" || res.status === "failed") {
         clearInterval(interval);
         handleZipProcessResponse(res, el);
       } else {
@@ -1449,9 +1474,17 @@ async function pollZipStatus(jobId, el) {
 }
 
 function handleZipProcessResponse(res, el) {
-  if (res.success) {
+  if (res.success && res.status !== "failed") {
     el.className = "result-box success";
     let html = `✅ <strong>Processing Complete!</strong><br><br>`;
+    
+    // Check if any sub-tasks failed
+    const failures = res.results ? res.results.filter(r => r.error) : [];
+    if (failures.length > 0) {
+      html = `⚠️ <strong>Processing Completed with some errors</strong><br><br>`;
+      el.className = "result-box warning";
+    }
+
     if (res.results && res.results.length) {
       res.results.forEach(item => {
         html += `<div style="margin-bottom:10px; border-bottom:1px solid var(--border); padding-bottom:5px">
@@ -1464,16 +1497,28 @@ function handleZipProcessResponse(res, el) {
       html += `No matching ZIP files were processed.`;
     }
     el.innerHTML = html;
+    
     if (res.output_dir) {
       el.innerHTML += `<div style="margin-top:15px">
         <button class="btn btn-primary btn-sm" onclick="openFolder('${res.output_dir.replace(/\\/g, '\\\\')}')">📂 Open Output Folder</button>
       </div>`;
+      
+      // Auto-open folder if successful
+      if (typeof openFolder === 'function') {
+        openFolder(res.output_dir);
+      }
     }
-    toast("Zip processing successful!", "success");
+    
+    if (failures.length > 0) {
+      toast(`Processed with ${failures.length} errors`, "warning");
+    } else {
+      toast("Zip processing successful!", "success");
+    }
   } else {
     el.className = "result-box error";
-    el.innerHTML = `❌ ${esc(res.error || "Processing failed")}`;
-    toast("Error: " + (res.error || "Failed"), "error");
+    const errorMsg = res.error || (res.status === "failed" ? "The process encountered a catastrophic error." : "Processing failed");
+    el.innerHTML = `❌ ${esc(errorMsg)}`;
+    toast("Error: " + errorMsg, "error");
   }
 }
 
@@ -1564,6 +1609,7 @@ async function mergePdfsUI() {
         el.innerHTML += `<div style="margin-top:10px">
           <button class="btn btn-primary btn-sm" onclick="openFolder('${res.output_dir.replace(/\\/g, '\\\\')}')">📂 Open Output Folder</button>
         </div>`;
+        openFolder(res.output_dir);
       }
       toast("PDF मर्ज सफल!", "success");
     } else {
@@ -1582,60 +1628,64 @@ async function compressPdfUI() {
   const mode = v("compress-mode");
   const el = document.getElementById("pdf-tools-result");
 
-  if (!fileInput.files.length) { toast("एक PDF फ़ाइल चुनें", "error"); return; }
+  if (!fileInput.files.length) { toast("एक या अधिक PDF फ़ाइलें चुनें", "error"); return; }
 
   el.style.display = "block"; el.className = "result-box";
-  el.innerHTML = `<span class="spinner"></span> PDF कंप्रेस हो रहा है...`;
+  const files = Array.from(fileInput.files);
+  let processedCount = 0;
+  let lastOutputDir = null;
 
-  const fd = new FormData();
-  const file = fileInput.files[0];
-  fd.append("file", file);
-  fd.append("mode", mode);
+  for (const file of files) {
+    processedCount++;
+    el.innerHTML = `<span class="spinner"></span> 📉 <strong>Processing ${processedCount} of ${files.length}:</strong> ${esc(file.name)}...`;
+    
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("mode", mode);
 
-  try {
-    const r = await fetch("/api/documents/compress-pdf", { method: "POST", body: fd });
-    if (!r.ok) {
-      if (r.status === 413) throw new Error("File is too large to upload (exceeds 500MB).");
-      throw new Error(`Compression failed (${r.status}).`);
-    }
-    const res = await r.json();
-    if (res.success) {
-      if (res.needs_split) {
-        el.className = "result-box warning";
-        el.innerHTML = `
-          <div style="display:flex; flex-direction:column; gap:12px;">
-            <span>⚠️ <strong>फाइल अभी भी 20MB से बड़ी है:</strong> ${esc(res.message)}</span>
-            <div style="display:flex; align-items:center; gap:10px; background:rgba(255,193,7,0.1); padding:10px; border-radius:4px; border:1px dashed var(--warning);">
-              <label style="font-size:12px; margin-bottom:0; font-weight:bold;">Pages per part:</label>
-              <input type="number" id="manual-split-pages" class="form-control" style="width:80px; height:30px; font-size:12px;" placeholder="Auto" min="1" />
-              <span style="font-size:11px; color:var(--text-muted)">(खाली छोड़ें 'Auto' के लिए)</span>
+    try {
+      const r = await fetch("/api/documents/compress-pdf", { method: "POST", body: fd });
+      if (!r.ok) throw new Error(`Failed for ${file.name} (${r.status})`);
+      
+      const res = await r.json();
+      if (res.success) {
+        lastOutputDir = res.output_dir;
+        if (res.needs_split) {
+          el.className = "result-box warning";
+          el.innerHTML = `
+            <div style="display:flex; flex-direction:column; gap:12px;">
+              <span>⚠️ <strong>फाइल अभी भी 20MB से बड़ी है:</strong> ${esc(res.message)}</span>
+              <p style="font-size:12px">बचा हुआ बैच (Batch) जारी रखने के लिए पहले इसे स्प्लिट करें या 'Skip' करें।</p>
+              <div style="display:flex; align-items:center; gap:10px; background:rgba(255,193,7,0.1); padding:10px; border-radius:4px; border:1px dashed var(--warning);">
+                <label style="font-size:12px; margin-bottom:0; font-weight:bold;">Pages per part:</label>
+                <input type="number" id="manual-split-pages" class="form-control" style="width:80px; height:30px; font-size:12px;" placeholder="Auto" min="1" />
+              </div>
+              <div style="display:flex; gap:10px;">
+                <button class="btn btn-primary btn-sm" onclick="executeSplit('${res.temp_path.replace(/\\/g, '\\\\')}', '${esc(file.name)}')">✂️ Split Now</button>
+                <button class="btn btn-ghost btn-sm" onclick="location.reload()">⏭️ Skip & Finish Batch</button>
+              </div>
             </div>
-            <div style="display:flex; gap:10px;">
-              <button class="btn btn-primary btn-sm" onclick="executeSplit('${res.temp_path.replace(/\\/g, '\\\\')}', '${esc(file.name)}')">✂️ Split Now</button>
-              <button class="btn btn-ghost btn-sm" onclick="this.parentElement.parentElement.parentElement.innerHTML='✅ Compressed file kept on Desktop.'">Keep Large File</button>
-            </div>
-          </div>
-        `;
-        toast("File still exceeds 20MB", "warning");
-      } else {
-        el.className = "result-box success";
-        el.innerHTML = `✅ ${esc(res.message)}`;
-        if (res.output_dir) {
-          el.innerHTML += `<div style="margin-top:10px">
-             <button class="btn btn-primary btn-sm" onclick="openFolder('${res.output_dir.replace(/\\/g, '\\\\')}')">📂 Open Output Folder</button>
-           </div>`;
+          `;
+          toast("File exceeds 20MB, batch paused.", "warning");
+          return; 
         }
-        toast("PDF कंप्रेस सफल!", "success");
+      } else {
+        toast(`Error processing ${file.name}: ${res.error}`, "error");
       }
-    } else {
-      el.className = "result-box error";
-      el.innerHTML = `❌ ${esc(res.error || "Compression failed")}`;
-      toast("PDF कंप्रेस विफल", "error");
+    } catch (e) {
+      toast(`Network error for ${file.name}: ${e.message}`, "error");
     }
-  } catch (e) {
-    el.className = "result-box error";
-    el.innerHTML = `❌ API Error: ${esc(String(e))}`;
   }
+
+  el.className = "result-box success";
+  el.innerHTML = `✅ Batch process complete! ${files.length} files processed.`;
+  if (lastOutputDir) {
+    el.innerHTML += `<div style="margin-top:10px">
+       <button class="btn btn-primary btn-sm" onclick="openFolder('${lastOutputDir.replace(/\\/g, '\\\\')}')">📂 Open Output Folder</button>
+    </div>`;
+    openFolder(lastOutputDir);
+  }
+  toast("Batch compression successful!", "success");
 }
 
 async function executeSplit(path, originalName) {
@@ -1661,6 +1711,7 @@ async function executeSplit(path, originalName) {
         el.innerHTML += `<div style="margin-top:15px">
           <button class="btn btn-primary btn-sm" onclick="openFolder('${res.output_dir.replace(/\\/g, '\\\\')}')">📂 Open Output Folder</button>
         </div>`;
+        openFolder(res.output_dir);
       }
       toast("Split successful!", "success");
     } else {
@@ -2367,6 +2418,11 @@ async function loadLLMStatus() {
 
   if (se("llm-summarization-master-prompt")) se("llm-summarization-master-prompt").value = lc.summarization_master_prompt || "";
   if (se("llm-tec-evaluation-prompt")) se("llm-tec-evaluation-prompt").value = lc.tec_evaluation_prompt || "";
+  
+  // Missing prompts pre-fill
+  if (se("llm-noting-master-prompt")) se("llm-noting-master-prompt").value = lc.noting_master_prompt || "";
+  if (se("llm-email-master-prompt")) se("llm-email-master-prompt").value = lc.email_master_prompt || "";
+  if (se("llm-knowhow-master-prompt")) se("llm-knowhow-master-prompt").value = lc.qa_system_prompt || "";
 
   // Proxy settings pre-fill
   const nw = s.network || {};
@@ -2603,7 +2659,28 @@ async function saveQuickAnalysisConfig() {
 
 function dropInDefaultPrompt(type) {
   const prompts = {
-    noting: `You are an expert procurement professional.\n\nDraft an official noting in Hindi by default. Convert Hinglish into proper official Hindi.\nIf any sentence is in English, convert it to Hindi unless the source content must stay as-is. Use the available reference context and writing style examples when helpful.\n-Table data also to be converted in Hindi.\n-बोली to be replaced with निविदा\n- use smart intelligence to Ensure the firm name / contract name etc remain same throughout if the user forget to update in later paragraph / content the name of firm / contract number etc.\n- बोलीदाता to be replaced with निविदाकर्ता\n- Use English alternative (in bracket) of complex hindi word / terminology\n- If a highly relevant draft or template is found in the Preferred Style Examples, you MUST follow its exact structure, tone, and phrasing, only substituting the specific details from the additional context provided.\n- Always use Markdown tables for any data comparisons, price lists, or tabular reports.\n\nAdditional Context:\n{additional_context}\n\nReference Context:\n{rag_context}\n\nPreferred Style Examples:\n{user_style_examples}\nCheck if the first paragraph modified by the user contains firm name as "x" and forget to replace in subsequent paragraph, then correct this. Check for calculations made (correct if wrong calculated). If there is any Figure in Rupees, then same may be written in word in bracket also.\nCheck for instruction in additional context. rearrange the noting text as per context. Add contextual topic in appropriate place. Return only the final noting text without subject or sub-heading.`,
+    noting: `You are an expert procurement professional.
+
+Draft an official noting in Hindi by default. Convert Hinglish into proper official Hindi.
+If any sentence is in English, convert it to Hindi unless the source content must stay as-is. Use the available reference context and writing style examples when helpful.
+- Table data MUST remain as HTML tables (<table>, <tr>, <td>). Never use Markdown tables (|---|).
+- बोली to be replaced with निविदा
+- Ensure the firm name / contract name etc remain same throughout if the user forgets to update in later paragraphs.
+- बोलीदाता to be replaced with निविदाकर्ता
+- Use English alternative (in bracket) of complex Hindi word / terminology.
+- If a highly relevant draft or template is found in the Preferred Style Examples, follow its exact structure.
+- Check for calculations and correct if wrong. If there is any Figure in Rupees, then same may be written in words in bracket also.
+
+Additional Context:
+{additional_context}
+
+Reference Context:
+{rag_context}
+
+Preferred Style Examples:
+{user_style_examples}
+
+Return only the final noting text without subject or sub-heading.`,
     email: `You are an expert Indian Government official drafting a formal email.\n\nRefine the provided draft into a polished official email body in {target_language}.\n- Keep the output as an email, not a file noting.\n- Never add the closing line "\\u092b\\u093e\\u0907\\u0932 \\u0906\\u092a\\u0915\\u0947 \\u0905\\u0935\\u0932\\u094b\\u0915\\u0928\\u093e\\u0930\\u094d\\u0925 \\u092a\\u094d\\u0930\\u0938\\u094d\\u0924\\u0941\\u0924 \\u0939\\u0948 \\u0964" or any similar file-submission line unless the user explicitly asks for it.\n- If the draft already contains a closing/sign-off, keep only one appropriate closing and do not repeat it.\n- Preserve names, references, numbers, contract details, and email-specific structure unless the user asks to change them.\n- Follow the user's stored style and learned wording preferences whenever relevant.\n\nDraft Content:\n{draft_content}\n\nAdditional Instructions:\n{additional_instructions}\n\nPreferred Style Examples:\n{user_style_examples}\n\nStyle Summary:\n{style_summary}\n\nLearning Instructions:\n{learning_instructions}\n\nReturn only the final email content without explanation.`,
     knowhow: `You are an expert Government Official and Procurement Specialist.\nYour task is to answer user questions based STRICTLY on the provided Knowledge Base context.\n\nIf the information is not in the context, say you don't know rather than hallucinating.\nAlways provide rule numbers or circular references if mentioned in the context.\n\nANSWER PATTERN (strictly follow this order):\n1. GFR 2017: Relevant clause and description (if found in context).\n2. Manual for Procurement of Goods: Relevant clause and description (if found in context).\n3. GeM ATC (Additional Terms & Conditions): Relevant clause and description (if found in context).\n4. GSI Manual: Relevant clause and description (if found in context).\n5. Web Search Result / Supplemental Info: Provide relevant external or supplemental info.\n6. Advisory: Provide a practical advisory or recommendation for the user.\n\n=== LEARNING CONTEXT ===\n{learning_context}\n\n=== KNOWLEDGE BASE CONTEXT ===\n{context}\n==============================\n\nUser Question: {prompt}\n\nProvide a helpful, precise answer in {target_language}.`,
     summarization: `Analyze the following extracted document text based on the USER REQUIREMENT.\n\nUSER REQUIREMENT: {user_requirement}\n\nGUIDELINES:\n1. Provide a structured, professional summary or analysis as per the user requirement.\n2. Maintain an official, government-standard tone.\n3. Highlight key dates, entities (firms, individuals), monetary amounts, and action items.\n4. If technical evaluation is involved, clearly list qualification status for each vendor.\n5. Use Markdown tables or bullet points for clarity.\n6. Provide the result in clean, well-formatted Rich Text (HTML).\n\nEXTRACTED TEXT:\n---\n{document_text}\n---\n`,
@@ -2672,20 +2749,38 @@ async function saveNetworkConfig() {
 }
 
 async function saveLLMConfig() {
-  let ctxInput = v("llm-context") || v("llm-ctx") || "8192";
+  const ctxInput = v("llm-context") || "8192";
 
   const payload = {
     provider: v("llm-provider"),
     gemini_model: v("llm-gemini-model"),
     temperature: parseFloat(v("llm-temp")),
     context_length: parseInt(ctxInput),
-    enable_widget: document.getElementById("llm-enable-widget") ? document.getElementById("llm-enable-widget").checked : false,
     noting_master_prompt: v("llm-noting-master-prompt"),
     email_master_prompt: v("llm-email-master-prompt"),
     qa_system_prompt: v("llm-knowhow-master-prompt"),
     summarization_master_prompt: v("llm-summarization-master-prompt"),
     tec_evaluation_prompt: v("llm-tec-evaluation-prompt")
   };
+
+  // Collect Quick Analysis Buttons
+  const qBtnContainer = document.getElementById("quick-analysis-buttons-config");
+  if (qBtnContainer) {
+    const qItems = qBtnContainer.querySelectorAll(".card");
+    const buttons = [];
+    qItems.forEach(item => {
+      const labelInput = item.querySelector(".qa-label");
+      const promptInput = item.querySelector(".qa-prompt");
+      if (labelInput && promptInput) {
+        const label = labelInput.value.trim();
+        const prompt = promptInput.value.trim();
+        if (label && prompt) {
+          buttons.push({ id: label.toLowerCase().replace(/\s+/g, '-'), label, prompt });
+        }
+      }
+    });
+    payload.quick_analysis_buttons = JSON.stringify(buttons);
+  }
 
   const geminiKey = v("llm-gemini-key").trim();
   if (geminiKey && !geminiKey.includes("••••")) {
@@ -2694,12 +2789,6 @@ async function saveLLMConfig() {
   const groqKey = v("llm-groq-key").trim();
   if (groqKey && !groqKey.includes("••••")) {
     payload.groq_api_key = groqKey;
-  }
-  
-  const customModelId = v("llm-model-id").trim();
-  if (customModelId) {
-    if (payload.provider === "groq") payload.groq_model = customModelId;
-    else payload.gemini_model = customModelId;
   }
 
   const res = await apiFetch("/api/llm/config", "POST", payload);
@@ -3766,20 +3855,72 @@ function saveEmailToLibrary() {
 }
 
 // ─── EXTRACT TEXT MODULE ──────────────────────────
-async function runTextExtraction() {
+function getExtractStatusEl() {
+  return document.getElementById("smart-status");
+}
+
+function getSummaryResultEl() {
+  return document.getElementById("summary-display") || document.getElementById("ai-summary-result");
+}
+
+function setSummaryResult(content) {
+  const summaryArea = getSummaryResultEl();
+  if (summaryArea) {
+    summaryArea.innerHTML = plainTextToHtml(content || "");
+  }
+}
+
+function resetSummaryResult() {
+  const summaryArea = getSummaryResultEl();
+  if (summaryArea) {
+    summaryArea.innerHTML = `<div class="empty-state">Analysis results will appear here...</div>`;
+  }
+}
+
+function setExtractActionButtonsDisabled(disabled) {
+  ["btn-run-extraction", "btn-run-smart"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  });
+}
+
+function getExtractEditorText() {
+  if (!window.extractQuill) return "";
+  const html = window.extractQuill.root.innerHTML;
+  const tmp = document.createElement("div");
+  tmp.innerHTML = html;
+  return (tmp.innerText || tmp.textContent || "").trim();
+}
+
+function renderExtractedResult(result) {
+  const out = (result && typeof result === "object") ? (result.text || result.html || "") : (result || "");
+  if (window.extractQuill) {
+    window.extractQuill.setContents([]);
+    const cleanContent = cleanAiOutput(out);
+    window.extractQuill.clipboard.dangerouslyPasteHTML(result?.html || plainTextToHtml(cleanContent));
+  }
+  window.lastExtractedText = out;
+  return out;
+}
+
+async function runTextExtraction(options = {}) {
   const fileInput = document.getElementById("extract-file-input");
-  const status = document.getElementById("smart-status"); // Use unified status box
+  const status = getExtractStatusEl();
   const btn = document.getElementById("btn-run-extraction");
   const method = "vision"; // Default to vision for better quality
+  const autoAnalyze = Boolean(options.autoAnalyze);
+  const context = options.context || "";
 
   if (!fileInput.files.length && !window.extractClipboardBlob) {
     return toast("Please select a file or paste an image first.", "error");
   }
 
-  status.style.display = "block";
-  status.className = "result-box info";
-  status.innerHTML = `<span class="spinner"></span> 🚀 Uploading and starting extraction via Vision LLM...`;
-  btn.disabled = true;
+  if (status) {
+    status.style.display = "block";
+    status.className = "result-box info";
+    status.innerHTML = `<span class="spinner"></span> 🚀 Uploading and starting extraction via Vision LLM...`;
+  }
+  setExtractActionButtonsDisabled(true);
 
   try {
     const formData = new FormData();
@@ -3802,32 +3943,32 @@ async function runTextExtraction() {
     const data = await res.json();
     if (data.success && data.job_id) {
       pollExtractionStatus(data.job_id, status, btn, "Extraction", (result) => {
-        const out = result.text || result;
-        if (window.extractQuill) {
-          window.extractQuill.setContents([]);
-          const cleanContent = cleanAiOutput(out);
-          window.extractQuill.clipboard.dangerouslyPasteHTML(result.html || plainTextToHtml(cleanContent));
-        }
-        
-        // Update summary area below
-        const summaryArea = document.getElementById("ai-summary-result");
-        if (summaryArea) {
-           summaryArea.innerHTML = result.html || plainTextToHtml(out);
-        }
-
-        // Store current text and hash for smart process
-        window.lastExtractedText = out;
+        const out = renderExtractedResult(result);
         window.lastFileHash = fileHash;
+        window.pendingExtractSource = false;
+
+        if (autoAnalyze) {
+          return runSmartProcess({
+            text: out,
+            fileHash,
+            context,
+            skipFileInputs: true
+          });
+        }
       });
     } else {
-      status.className = "result-box error";
-      status.innerHTML = `❌ Error: ${esc(data.error)}`;
-      btn.disabled = false;
+      if (status) {
+        status.className = "result-box error";
+        status.innerHTML = `❌ Error: ${esc(data.error)}`;
+      }
+      setExtractActionButtonsDisabled(false);
     }
   } catch (e) {
-    status.className = "result-box error";
-    status.innerHTML = `❌ Connection Error: ${esc(e.message)}`;
-    btn.disabled = false;
+    if (status) {
+      status.className = "result-box error";
+      status.innerHTML = `❌ Connection Error: ${esc(e.message)}`;
+    }
+    setExtractActionButtonsDisabled(false);
   }
 }
 
@@ -3837,26 +3978,30 @@ async function pollExtractionStatus(jobId, statusEl, btn, label, onComplete) {
       const res = await apiFetch(`/api/extract/status/${jobId}`);
       if (res.status === "complete") {
         clearInterval(interval);
-        statusEl.className = "result-box success";
-        statusEl.innerHTML = `✅ ${label} complete!`;
-        btn.disabled = false;
+        if (statusEl) {
+          statusEl.className = "result-box success";
+          statusEl.innerHTML = `✅ ${label} complete!`;
+        }
+        setExtractActionButtonsDisabled(false);
         if (onComplete) onComplete(res.result);
       } else if (res.status === "failed") {
         clearInterval(interval);
-        statusEl.className = "result-box error";
-        statusEl.innerHTML = `❌ ${label} failed: ${esc(res.error)}`;
-        btn.disabled = false;
+        if (statusEl) {
+          statusEl.className = "result-box error";
+          statusEl.innerHTML = `❌ ${label} failed: ${esc(res.error)}`;
+        }
+        setExtractActionButtonsDisabled(false);
       } else {
         // Still running
-        statusEl.innerHTML = `<span class="spinner"></span> ⚙️ ${label} in progress... please wait.`;
+        if (statusEl) statusEl.innerHTML = `<span class="spinner"></span> ⚙️ ${label} in progress... please wait.`;
       }
     } catch (e) {
       clearInterval(interval);
-      statusEl.className = "result-box error";
+      if (statusEl) statusEl.className = "result-box error";
       // Safely stringify — e may be an Error object or raw value, not always a string
       const errMsg = (e && e.message) ? String(e.message) : String(e);
-      statusEl.innerHTML = `❌ Polling Error: ${esc(errMsg)}`;
-      btn.disabled = false;
+      if (statusEl) statusEl.innerHTML = `❌ Polling Error: ${esc(errMsg)}`;
+      setExtractActionButtonsDisabled(false);
     }
   }, 2000);
 }
@@ -3865,7 +4010,7 @@ async function pollExtractionStatus(jobId, statusEl, btn, label, onComplete) {
 async function runDirectAnalyze() {
   const fileInput = document.getElementById('extract-file-input');
   const context   = document.getElementById('extract-ai-context').value.trim();
-  const statusEl  = document.getElementById('smart-status'); // Use existing status box
+  const statusEl  = getExtractStatusEl();
   const btn       = document.getElementById('btn-run-extraction') || document.getElementById('btn-run-smart');
 
   if (!fileInput || !fileInput.files.length) {
@@ -3874,10 +4019,12 @@ async function runDirectAnalyze() {
   }
 
   const file = fileInput.files[0];
-  statusEl.style.display = 'block';
-  statusEl.className = 'result-box info';
-  statusEl.innerHTML = '<span class="spinner"></span> 🧠 Sending file directly to AI for analysis...';
-  if (btn) btn.disabled = true;
+  if (statusEl) {
+    statusEl.style.display = 'block';
+    statusEl.className = 'result-box info';
+    statusEl.innerHTML = '<span class="spinner"></span> 🧠 Sending file directly to AI for analysis...';
+  }
+  setExtractActionButtonsDisabled(true);
 
   try {
     const fd = new FormData();
@@ -3887,34 +4034,23 @@ async function runDirectAnalyze() {
     const r = await fetch('/api/extract/direct-analyze', { method: 'POST', body: fd });
     const res = await r.json();
 
-    if (res.success) {
-      statusEl.className = 'result-box success';
-      statusEl.innerHTML = '✅ Analysis complete!';
-
-      // 1. Render into the main extraction editor
-      const quillEditor = window.extractQuill;
-      if (quillEditor) {
-        quillEditor.root.innerHTML = '';
-        quillEditor.clipboard.dangerouslyPasteHTML(0, plainTextToHtml(res.result || ''));
-      }
-      
-      // 2. Render into the summary area below
-      const summaryArea = document.getElementById("ai-summary-result");
-      if (summaryArea) {
-         summaryArea.innerHTML = plainTextToHtml(res.result || '');
-      }
-
-      window.lastExtractedText = res.result || '';
-      toast('🧠 Direct analysis done!', 'success');
+    if (res.success && res.job_id) {
+      pollExtractionStatus(res.job_id, statusEl, btn, "Direct Analysis", (result) => {
+        setSummaryResult(result?.processed_text || "");
+        toast('🧠 Direct analysis done!', 'success');
+      });
     } else {
-      statusEl.className = 'result-box error';
-      statusEl.innerHTML = `❌ ${esc(res.error || 'Direct analysis failed.')}`;
+      if (statusEl) {
+        statusEl.className = 'result-box error';
+        statusEl.innerHTML = `❌ ${esc(res.error || 'Direct analysis failed.')}`;
+      }
     }
   } catch (e) {
-    statusEl.className = 'result-box error';
-    statusEl.innerHTML = `❌ Network Error: ${esc(String(e.message || e))}`;
-  } finally {
-    if (btn) btn.disabled = false;
+    if (statusEl) {
+      statusEl.className = 'result-box error';
+      statusEl.innerHTML = `❌ Network Error: ${esc(String(e.message || e))}`;
+    }
+    setExtractActionButtonsDisabled(false);
   }
 }
 
@@ -3930,10 +4066,10 @@ async function calculateFileHash(file) {
   }
 }
 
-async function runSmartProcess() {
+async function runSmartProcess(options = {}) {
   const contextEl = document.getElementById("extract-ai-context");
-  const context = contextEl ? contextEl.value : "";
-  const status = document.getElementById("smart-status");
+  const context = options.context ?? (contextEl ? contextEl.value : "");
+  const status = getExtractStatusEl();
   const btn = document.getElementById("btn-run-extraction") || document.getElementById("btn-run-smart");
   const fileInput = document.getElementById("summary-file-input");
   
@@ -3942,23 +4078,20 @@ async function runSmartProcess() {
     status.className = "result-box info";
     status.innerHTML = `<span class="spinner"></span> Initializing processing...`;
   }
-  if (btn) btn.disabled = true;
+  setExtractActionButtonsDisabled(true);
 
   try {
-    let rawText = (window.lastExtractedText || "").trim();
-    let fileHash = window.lastFileHash || null;
+    let rawText = (options.text || window.lastExtractedText || "").trim();
+    let fileHash = options.fileHash || window.lastFileHash || null;
     
     // Fallback: strip HTML from Quill if no lastExtractedText
-    if (!rawText && window.extractQuill) {
-      const html = window.extractQuill.root.innerHTML;
-      const tmp = document.createElement('div');
-      tmp.innerHTML = html;
-      rawText = (tmp.innerText || tmp.textContent || "").trim();
+    if (!rawText) {
+      rawText = getExtractEditorText();
     }
     
     // 1. Handle direct file upload for summary (Direct Analysis path)
-    if (fileInput && fileInput.files.length > 0) {
-      status.innerHTML = `<span class="spinner"></span> 📄 Analyzing file directly (One-step summary)...`;
+    if (!options.skipFileInputs && fileInput && fileInput.files.length > 0) {
+      if (status) status.innerHTML = `<span class="spinner"></span> 📄 Analyzing file directly (One-step summary)...`;
       const file = fileInput.files[0];
       
       const formData = new FormData();
@@ -3976,27 +4109,28 @@ async function runSmartProcess() {
       
       return pollExtractionStatus(data.job_id, status, btn, "Direct Analysis", (result) => {
         const out = result.processed_text || "";
-        // Update summary area only
-        const summaryArea = document.getElementById("ai-summary-result");
-        if (summaryArea) {
-           summaryArea.innerHTML = plainTextToHtml(out);
-        }
+        setSummaryResult(out);
         fileInput.value = ""; 
         toast("Direct analysis complete!", "success");
       });
     }
+
+    const mainInput = document.getElementById("extract-file-input");
+    const hasPendingMainSource = !options.skipFileInputs
+      && window.pendingExtractSource
+      && ((mainInput && mainInput.files.length > 0) || window.extractClipboardBlob);
+    if (hasPendingMainSource) {
+      return runTextExtraction({ autoAnalyze: true, context });
+    }
     
     // 2. Fallback check
-    if (!rawText && !window.extractClipboardBlob && (!fileInput || !fileInput.files.length)) {
-       // Check if there is a file in the main extraction input
-       const mainInput = document.getElementById("extract-file-input");
-       if (mainInput && mainInput.files.length > 0) {
-          // Trigger the main process instead
-          return runTextExtraction();
+    if (!rawText) {
+       if (!options.skipFileInputs && ((mainInput && mainInput.files.length > 0) || window.extractClipboardBlob)) {
+          return runTextExtraction({ autoAnalyze: true, context });
        }
-       
+
        if (status) status.style.display = "none";
-       if (btn) btn.disabled = false;
+       setExtractActionButtonsDisabled(false);
        return toast("Please paste text or select a file to summarize.", "info");
     }
 
@@ -4011,19 +4145,7 @@ async function runSmartProcess() {
     if (res.success && res.job_id) {
       pollExtractionStatus(res.job_id, status, btn, "AI Analysis", (result) => {
         const out = result.processed_text || "";
-        // Update result editor
-        if (window.extractQuill) {
-          window.extractQuill.setContents([]);
-          const cleanContent = cleanAiOutput(out);
-          const processedHtml = plainTextToHtml(cleanContent);
-          window.extractQuill.clipboard.dangerouslyPasteHTML(processedHtml);
-        }
-        
-        // Update summary area
-        const summaryArea = document.getElementById("ai-summary-result");
-        if (summaryArea) {
-           summaryArea.innerHTML = plainTextToHtml(out);
-        }
+        setSummaryResult(out);
         
         // Reset the file input after success
         if (fileInput) fileInput.value = "";
@@ -4033,14 +4155,14 @@ async function runSmartProcess() {
         status.className = "result-box error";
         status.innerHTML = `❌ Error: ${esc(res.error)}`;
       }
-      if (btn) btn.disabled = false;
+      setExtractActionButtonsDisabled(false);
     }
   } catch (e) {
     if (status) {
       status.className = "result-box error";
       status.innerHTML = `❌ Error: ${esc(e.message)}`;
     }
-    if (btn) btn.disabled = false;
+    setExtractActionButtonsDisabled(false);
   }
 }
 
@@ -4065,6 +4187,11 @@ function handleGlobalPaste(e) {
     if (item.type.indexOf("image") !== -1) {
       const blob = item.getAsFile();
       window.extractClipboardBlob = blob;
+      window.pendingExtractSource = true;
+      window.lastExtractedText = "";
+      window.lastFileHash = null;
+      if (window.extractQuill) window.extractQuill.setContents([]);
+      resetSummaryResult();
       const reader = new FileReader();
       reader.onload = (event) => {
         const container = document.getElementById("extract-preview-container");
@@ -4087,8 +4214,17 @@ function handleGlobalPaste(e) {
 
 function clearExtractInput() {
   document.getElementById("extract-file-input").value = "";
+  const summaryFileInput = document.getElementById("summary-file-input");
+  if (summaryFileInput) summaryFileInput.value = "";
   document.getElementById("extract-preview-container").style.display = "none";
   window.extractClipboardBlob = null;
+  window.pendingExtractSource = false;
+  window.lastExtractedText = "";
+  window.lastFileHash = null;
+  if (window.extractQuill) window.extractQuill.setContents([]);
+  const status = getExtractStatusEl();
+  if (status) status.style.display = "none";
+  resetSummaryResult();
 }
 
 function previewExtractFile(e) {
@@ -4096,6 +4232,11 @@ function previewExtractFile(e) {
   if (!file) return;
 
   window.extractClipboardBlob = null; // Clear pasted image if file selected
+  window.pendingExtractSource = true;
+  window.lastExtractedText = "";
+  window.lastFileHash = null;
+  if (window.extractQuill) window.extractQuill.setContents([]);
+  resetSummaryResult();
   const container = document.getElementById("extract-preview-container");
   const img = document.getElementById("extract-preview-img");
   const filename = document.getElementById("extract-preview-filename");
@@ -4212,6 +4353,11 @@ async function pasteFromClipboard() {
         const type = item.types.find(t => t.startsWith("image/"));
         const blob = await item.getType(type);
         window.extractClipboardBlob = blob;
+        window.pendingExtractSource = true;
+        window.lastExtractedText = "";
+        window.lastFileHash = null;
+        if (window.extractQuill) window.extractQuill.setContents([]);
+        resetSummaryResult();
         
         const reader = new FileReader();
         reader.onload = (event) => {
@@ -4527,5 +4673,90 @@ async function pollMonitorStatus() {
   // Poll every 10 seconds for UI updates
   if (monitorJobId) {
     monitorTimer = setTimeout(pollMonitorStatus, 10000);
+  }
+}
+
+// ─── MODULE: TEC MINUTES ───────────────────────────
+async function draftTECMinutes() {
+  const tecType = v("tec-minutes-type");
+  const category = v("tec-minutes-category");
+  const indentingMember = v("tec-indenting-member");
+  const rawData = v("tec-minutes-raw-data");
+
+  if (!rawData.trim()) {
+    return toast("Please provide some tender data in the input box.", "error");
+  }
+
+  const btn = event?.target || document.querySelector('[onclick="draftTECMinutes()"]');
+  if (btn) btn.disabled = true;
+  toast("🤖 Drafting formal TEC minutes...", "info");
+
+  try {
+    const res = await apiFetch("/api/tec/minutes/draft", "POST", {
+      tec_type: tecType,
+      category: category,
+      indenting_member: indentingMember,
+      raw_input: rawData
+    });
+
+    if (res.success && res.draft_html) {
+      if (window.tecMinutesQuill) {
+        window.tecMinutesQuill.setContents([]);
+        window.tecMinutesQuill.clipboard.dangerouslyPasteHTML(res.draft_html);
+      } else {
+        const editor = document.getElementById("tec-minutes-editor");
+        if (editor) editor.innerHTML = res.draft_html;
+      }
+      toast("✅ TEC Minutes drafted successfully!", "success");
+    } else {
+      toast("Error: " + (res.error || "Drafting failed"), "error");
+    }
+  } catch (e) {
+    toast("Error: " + e.message, "error");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function downloadTECMinutes() {
+  if (!window.tecMinutesQuill) return;
+  const html = window.tecMinutesQuill.root.innerHTML;
+  const tecType = v("tec-minutes-type");
+
+  toast("Generating Legal-sized DOCX...", "info");
+  try {
+    const res = await fetch("/api/tec/minutes/download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ 
+        html, 
+        tec_type: tecType,
+        filename: `TEC_Minutes_${tecType}_${new Date().getTime()}` 
+      })
+    });
+    
+    const data = await res.json();
+    if (data.success) {
+      toast(`✅ Saved to Desktop: ${data.path}`, "success");
+    } else {
+      toast("Error: " + (data.error || "Download failed"), "error");
+    }
+  } catch (e) {
+    toast("Error: " + e.message, "error");
+  }
+}
+
+function copyTECMinutes() {
+  if (window.tecMinutesQuill) {
+    const text = window.tecMinutesQuill.getText();
+    navigator.clipboard.writeText(text).then(() => toast("Copied to clipboard!", "success"));
+  }
+}
+
+function clearTECMinutesInput() {
+  if (confirm("Clear all TEC Minutes input and draft?")) {
+    document.getElementById("tec-minutes-raw-data").value = "";
+    document.getElementById("tec-indenting-member").value = "";
+    if (window.tecMinutesQuill) window.tecMinutesQuill.setContents([]);
   }
 }

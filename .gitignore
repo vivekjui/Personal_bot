@@ -63,3 +63,4 @@ db/
 debug_db.py
 test_noting_api.py
 scripts/migrate_modular_dbs.py
+cache/

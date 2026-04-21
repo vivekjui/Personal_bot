@@ -83,10 +83,10 @@ def _normalize_gemini_model_name(model_name: str) -> str:
     mappings = {
         "gemma3-27b": "gemma-3-27b-it",
         "gemini-3.1-flash-lite": "gemini-2.0-flash", # Use 2.0-flash as stable fallback
-        "gemini-1.5-flash": "gemini-2.0-flash",
-        "gemini-1.5-flash-latest": "gemini-2.0-flash",
+        "gemini-1.5-flash": "gemini-1.5-flash",
+        "gemini-1.5-flash-latest": "gemini-1.5-flash-latest",
         "gemini-1.5-pro": "gemini-1.5-pro",
-        "gemini-flash-latest": "gemini-2.0-flash",
+        "gemini-flash-latest": "gemini-1.5-flash-latest",
         "gemini-2.0-flash-lite": "gemini-2.0-flash-lite-preview-02-05",
     }
     

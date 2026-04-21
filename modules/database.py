@@ -369,9 +369,9 @@ def _seed_noting_defaults() -> None:
     cursor = conn.cursor()
 
     for key, default_value in PROMPT_SETTINGS_DEFAULTS.items():
-        # Force restore if noting_master_prompt is blank or messed up (user requested)
-        existing = get_app_setting(key)
-        if not existing or (key == "noting_master_prompt" and len(existing.strip()) < 50):
+        # Only seed if key is missing or (for noting_master_prompt) if it's way too short to be valid
+        existing = get_app_setting(key, None)
+        if existing is None or (key == "noting_master_prompt" and len(existing.strip()) < 50):
             migrated_value = LEGACY_LLM_PROMPT_VALUES.get(key) or default_value
             set_app_setting(key, migrated_value)
             logger.info(f"Seed: Restored/Seeded {key}")
