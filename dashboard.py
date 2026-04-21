@@ -1115,10 +1115,9 @@ def api_merge_pdf():
     pdf_tools_root = desktop / "PDF Tools"
     pdf_tools_root.mkdir(parents=True, exist_ok=True)
     
-    output_dir = pdf_tools_root / f"Merge_{timestamp}"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = pdf_tools_root
     
-    output_filename = "Merged_Document.pdf"
+    output_filename = f"Merged_{timestamp}.pdf"
     output_path = output_dir / output_filename
     
     # Save temp files
@@ -1133,7 +1132,7 @@ def api_merge_pdf():
             temp_paths.append(path)
         
         merge_pdfs(temp_paths, output_path)
-        return jsonify({"success": True, "message": f"Merged file saved to folder: {output_dir.name}", "output_path": str(output_path), "output_dir": str(output_dir)})
+        return jsonify({"success": True, "message": f"Merged file saved to 'PDF Tools' folder", "output_path": str(output_path), "output_dir": str(output_dir)})
     except Exception as e:
         logger.error(f"Merge PDF error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -1160,8 +1159,7 @@ def api_compress_pdf():
     pdf_tools_root = desktop / "PDF Tools"
     pdf_tools_root.mkdir(parents=True, exist_ok=True)
     
-    output_dir = pdf_tools_root / f"Compress_{timestamp}"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = pdf_tools_root
     
     orig_name = Path(file.filename).stem
     output_path = output_dir / f"{orig_name}_compressed.pdf"
@@ -1197,7 +1195,7 @@ def api_compress_pdf():
             response_data["temp_path"] = str(final_output_path)
             response_data["message"] = f"File is still over 19.9MB ({round(new_size/(1024*1024), 2)}MB). Use Split tool to divide it."
         else:
-            response_data["message"] = f"Compressed successfully to {round(new_size/(1024*1024), 2)}MB."
+            response_data["message"] = f"Compressed successfully. Saved in 'PDF Tools' folder."
 
         return jsonify(response_data)
     except Exception as e:
@@ -1240,8 +1238,7 @@ def api_split_pdf():
     pdf_tools_root = desktop / "PDF Tools"
     pdf_tools_root.mkdir(parents=True, exist_ok=True)
     
-    output_dir = pdf_tools_root / f"Split_{timestamp}"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = pdf_tools_root
             
     base_name = Path(original_name).stem
     
@@ -1251,7 +1248,7 @@ def api_split_pdf():
         
         return jsonify({
             "success": True, 
-            "message": f"Successfully split into {len(parts)} parts in folder: {output_dir.name}",
+            "message": f"Successfully split into {len(parts)} parts in 'PDF Tools' folder",
             "parts": parts,
             "output_dir": str(output_dir)
         })
