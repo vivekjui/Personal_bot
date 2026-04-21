@@ -3,7 +3,7 @@ Noting Bot - Flask Web Dashboard Backend
 All API routes for the web UI.
 """
 
-VERSION = "1.07"
+VERSION = "1.08"
 GITHUB_REPO = "vivekjui/Personal_bot"
 GITHUB_REPO_LABEL = "Personal Bot"
 
@@ -1174,24 +1174,27 @@ def api_compress_pdf():
         file.save(str(temp_input))
         original_size = temp_input.stat().st_size
         
-        compress_pdf(temp_input, output_path, mode=mode)
+        final_output_path = compress_pdf(temp_input, output_path, mode=mode)
         
-        # Check if still > 19.9MB
-        new_size = output_path.stat().st_size
+        # Check if the file actually exists now
+        if not final_output_path.exists():
+            raise FileNotFoundError(f"Compressed file was not created: {final_output_path}")
+            
+        new_size = final_output_path.stat().st_size
         
         response_data = {
             "success": True, 
             "original_size": original_size,
             "new_size": new_size,
             "size_mb": round(new_size / (1024 * 1024), 2),
-            "output_path": str(output_path),
+            "output_path": str(final_output_path),
             "output_dir": str(output_dir),
-            "filename": output_path.name
+            "filename": final_output_path.name
         }
 
         if new_size > MAX_SIZE_BYTES:
             response_data["needs_split"] = True
-            response_data["temp_path"] = str(output_path)
+            response_data["temp_path"] = str(final_output_path)
             response_data["message"] = f"File is still over 19.9MB ({round(new_size/(1024*1024), 2)}MB). Use Split tool to divide it."
         else:
             response_data["message"] = f"Compressed successfully to {round(new_size/(1024*1024), 2)}MB."

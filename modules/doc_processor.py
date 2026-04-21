@@ -194,7 +194,7 @@ def split_pdf_by_size(input_pdf: Path, output_dir: Path, base_name: str, pages_p
                     else:
                         # Case B: Single page is too big. Compress it.
                         logger.info(f"Single page part {part_num} is {actual_size/1024/1024:.2f}MB, applying compression...")
-                        compress_pdf(final_part_path, final_part_path, mode="maximum")
+                        final_part_path = compress_pdf(final_part_path, final_part_path, mode="maximum")
                 
                 parts.append(final_part_filename)
                 current_start += pages_to_add
@@ -227,9 +227,15 @@ def compress_pdf(input_path: Path, output_path: Path, mode: str = "medium"):
     Compresses a PDF file.
     Modes: heavy, medium, maximum, super
     """
-    temp_path = output_path.with_suffix(".compress_tmp.pdf")
+    # Use a safer temp path that doesn't conflict
+    temp_path = output_path.parent / f"tmp_comp_{uuid.uuid4().hex[:8]}.pdf"
     
     try:
+        if not input_path.exists():
+            logger.error(f"Compression failed: Input file not found: {input_path}")
+            return input_path
+
+        logger.info(f"Compressing {input_path.name} (mode={mode})")
         doc = fitz.open(input_path)
         
         # Basic optimization settings
@@ -239,7 +245,7 @@ def compress_pdf(input_path: Path, output_path: Path, mode: str = "medium"):
             save_args["garbage"] = 4
             save_args["clean"] = True
         
-        if mode == "super" or mode == "maximum":
+        if mode in ["super", "maximum"]:
             save_args.update({
                 "garbage": 4,
                 "clean": True,
@@ -248,40 +254,51 @@ def compress_pdf(input_path: Path, output_path: Path, mode: str = "medium"):
                 "linear": True
             })
 
-        # Save to temp path first to avoid "save to original must be incremental" error
+        # Save to temp path first
         doc.save(str(temp_path), **save_args)
         doc.close()
         
         # If mode is maximum, do a second pass for extra optimization
         if mode == "maximum":
-            doc2 = fitz.open(temp_path)
-            temp_path2 = output_path.with_suffix(".compress_tmp2.pdf")
-            doc2.save(str(temp_path2), garbage=4, deflate=True, clean=True)
-            doc2.close()
-            if temp_path.exists(): temp_path.unlink()
-            temp_path = temp_path2
+            temp_path2 = output_path.parent / f"tmp_comp_v2_{uuid.uuid4().hex[:8]}.pdf"
+            try:
+                doc2 = fitz.open(temp_path)
+                doc2.save(str(temp_path2), garbage=4, deflate=True, clean=True)
+                doc2.close()
+                if temp_path.exists(): temp_path.unlink()
+                temp_path = temp_path2
+            except Exception as e2:
+                logger.warning(f"Second pass of maximum compression failed, using first pass: {e2}")
 
         # Final move to output_path
-        if output_path.exists() and input_path != output_path:
-            output_path.unlink()
-        
-        # On Windows, rename can fail if file is locked, so we use a loop or just catch
         if temp_path.exists():
             try:
-                if output_path.exists(): output_path.unlink()
-                temp_path.rename(output_path)
-            except Exception as e:
-                logger.error(f"Failed to finalize compressed PDF: {e}")
-                return temp_path # Return temp path as fallback
+                if output_path.exists() and output_path.resolve() != input_path.resolve():
+                    output_path.unlink()
                 
-        return output_path
+                # Ensure output directory exists
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Move/Rename
+                shutil.move(str(temp_path), str(output_path))
+                logger.info(f"Compression complete: {output_path.name}")
+                return output_path
+            except Exception as e:
+                logger.error(f"Failed to finalize compressed PDF (rename/move): {e}")
+                # If rename fails, return the temp path so the caller still has a file
+                return temp_path
+        else:
+            logger.error("Compression failed: Temp file was not created.")
+            return input_path
 
     except Exception as e:
         logger.error(f"Compression error for {input_path.name}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        
         if temp_path.exists():
             try: temp_path.unlink()
             except: pass
         return input_path
     finally:
-        # Final cleanup attempt
         pass
