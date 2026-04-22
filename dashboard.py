@@ -3,7 +3,7 @@ Noting Bot - Flask Web Dashboard Backend
 All API routes for the web UI.
 """
 
-VERSION = "1.09"
+VERSION = "1.10"
 GITHUB_REPO = "vivekjui/Personal_bot"
 GITHUB_REPO_LABEL = "Personal Bot"
 
