@@ -369,9 +369,22 @@ def _seed_noting_defaults() -> None:
     cursor = conn.cursor()
 
     for key, default_value in PROMPT_SETTINGS_DEFAULTS.items():
-        # Only seed if key is missing or (for noting_master_prompt) if it's way too short to be valid
+        # Only seed if key is missing, empty, or (for noting_master_prompt) if it's way too short to be valid
         existing = get_app_setting(key, None)
-        if existing is None or (key == "noting_master_prompt" and len(existing.strip()) < 50):
+        
+        should_seed = False
+        if existing is None:
+            should_seed = True
+        elif not str(existing).strip():
+            should_seed = True
+        elif key == "noting_master_prompt" and len(str(existing).strip()) < 50:
+            should_seed = True
+        elif key == "quick_analysis_buttons" and str(existing).strip() == "[]":
+            # If buttons list is empty, we restore defaults unless user intentionally cleared it
+            # Actually, let's only restore if it was previously missing/null or empty string
+            pass
+
+        if should_seed:
             migrated_value = LEGACY_LLM_PROMPT_VALUES.get(key) or default_value
             set_app_setting(key, migrated_value)
             logger.info(f"Seed: Restored/Seeded {key}")

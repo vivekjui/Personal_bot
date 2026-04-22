@@ -337,6 +337,19 @@ document.addEventListener("DOMContentLoaded", () => {
   // Global Clipboard Listener for Images (for Extract Page)
   document.addEventListener('paste', handleGlobalPaste);
 
+  // Global Keyboard Shortcuts
+  document.addEventListener('keydown', (e) => {
+    // Alt + Left Arrow -> Back to Dashboard
+    if (e.altKey && (e.key === 'ArrowLeft')) {
+      const activePage = sessionStorage.getItem("activePage");
+      if (activePage && activePage !== "dashboard") {
+        // Prevent default browser behavior if we are in an app page
+        e.preventDefault();
+        showPage('dashboard');
+      }
+    }
+  });
+
   const lastPage = sessionStorage.getItem("activePage");
   if (lastPage && lastPage !== "dashboard") {
     showPage(lastPage);
@@ -2371,23 +2384,29 @@ async function searchKB() {
 // ─── LLM SETTINGS ──────────────────────────────────
 async function loadLLMStatus() {
   const grid = document.getElementById("llm-status-grid");
-  if (!grid) return;
-  grid.innerHTML = `<span class="spinner"></span> Checking...`;
+  if (grid) grid.innerHTML = `<span class="spinner"></span> Checking...`;
+  
   const s = await apiFetch("/api/llm/status");
+  if (!s || s.error) {
+    if (grid) grid.innerHTML = `<div class="text-danger">Failed to load LLM status.</div>`;
+    return;
+  }
 
   const geminiOk = s.gemini_key_set;
   const activeClr = geminiOk ? "var(--success)" : "var(--danger)";
 
-  grid.innerHTML = `
-    <div class="llm-status-item" style="border-color:${activeClr}">
-      <div class="llm-status-label">🔋 Active Backend</div>
-      <div class="llm-status-val" style="color:${activeClr};font-size:18px;font-weight:700">${esc(s.active_backend)}</div>
-    </div>
-    <div class="llm-status-item" style="border-color:${geminiOk ? 'var(--success)' : 'var(--border)'}">
-      <div class="llm-status-label">✨ Gemini Cloud</div>
-      <div class="llm-status-val">${geminiOk ? '✅ API Key Set' : '⚠️ No API Key'}</div>
-    </div>
-  `;
+  if (grid) {
+    grid.innerHTML = `
+      <div class="llm-status-item" style="border-color:${activeClr}">
+        <div class="llm-status-label">🔋 Active Backend</div>
+        <div class="llm-status-val" style="color:${activeClr};font-size:18px;font-weight:700">${esc(s.active_backend)}</div>
+      </div>
+      <div class="llm-status-item" style="border-color:${geminiOk ? 'var(--success)' : 'var(--border)'}">
+        <div class="llm-status-label">✨ Gemini Cloud</div>
+        <div class="llm-status-val">${geminiOk ? '✅ API Key Set' : '⚠️ No API Key'}</div>
+      </div>
+    `;
+  }
 
   // Update header pills
   const hb = document.getElementById("header-backend-status");
@@ -2400,26 +2419,36 @@ async function loadLLMStatus() {
     hc.className = `status-pill ${geminiOk ? 'online' : 'offline'}`;
     hc.querySelector(".status-text").textContent = `Cloud: ${geminiOk ? 'Ready' : 'Missing Key'}`;
   }
+  
   // pre-fill config form
   const se = id => document.getElementById(id);
   const lc = s.llm_config || {};
+  
   if (se("llm-provider")) {
-    se("llm-provider").value = s.provider;
-    toggleLLMKeyGroups(s.provider);
+    se("llm-provider").value = s.provider || "gemini";
+    toggleLLMKeyGroups(s.provider || "gemini");
   }
   
   if (se("llm-gemini-key") && s.gemini_key_set) se("llm-gemini-key").placeholder = "•••••••••••••••• (API set)";
   if (se("llm-groq-key") && lc.groq_api_key) se("llm-groq-key").placeholder = "•••••••••••••••• (API set)";
   
-  if (se("llm-gemini-model")) se("llm-gemini-model").value = lc.gemini_model || "gemini-2.0-flash";
-  if (se("llm-model-id")) se("llm-model-id").value = (s.provider === 'groq' ? lc.groq_model : lc.gemini_model) || "";
+  if (se("llm-model")) {
+    const activeModel = (s.provider === 'groq' ? lc.groq_model : lc.gemini_model) || "";
+    if (activeModel) se("llm-model").value = activeModel;
+  }
+  
+  // Update vision models across all potential locations
+  ["llm-vision-model", "extract-vision-model", "batch-vision-model"].forEach(id => {
+    const el = se(id);
+    if (el) el.value = lc.vision_model || "gemini-2.0-flash";
+  });
+
   if (se("llm-temp")) se("llm-temp").value = lc.temperature || 0.3;
   if (se("llm-context")) se("llm-context").value = lc.context_length || 8192;
 
+  // Prompt Templates pre-fill
   if (se("llm-summarization-master-prompt")) se("llm-summarization-master-prompt").value = lc.summarization_master_prompt || "";
   if (se("llm-tec-evaluation-prompt")) se("llm-tec-evaluation-prompt").value = lc.tec_evaluation_prompt || "";
-  
-  // Missing prompts pre-fill
   if (se("llm-noting-master-prompt")) se("llm-noting-master-prompt").value = lc.noting_master_prompt || "";
   if (se("llm-email-master-prompt")) se("llm-email-master-prompt").value = lc.email_master_prompt || "";
   if (se("llm-knowhow-master-prompt")) se("llm-knowhow-master-prompt").value = lc.qa_system_prompt || "";
@@ -2434,10 +2463,8 @@ async function loadLLMStatus() {
   if (se("network-proxy-port")) se("network-proxy-port").value = nw.proxy_port || "";
   if (se("network-proxy-user")) se("network-proxy-user").value = nw.proxy_username || "";
 
-  // Render Quick Analysis Buttons Configuration
+  // Render Quick Analysis Buttons
   renderQuickAnalysisConfig(lc.quick_analysis_buttons);
-
-  // Render Quick Analysis Buttons in Extraction Page
   renderQuickAnalysisButtons(lc.quick_analysis_buttons);
 
   // Set up provider change listener
@@ -2534,13 +2561,18 @@ function renderQuickAnalysisButtons(buttonsJson) {
   
   let buttons = [];
   try {
-    buttons = typeof buttonsJson === 'string' ? JSON.parse(buttonsJson) : buttonsJson;
+    if (buttonsJson) {
+      buttons = typeof buttonsJson === 'string' ? JSON.parse(buttonsJson) : buttonsJson;
+    }
     if (!Array.isArray(buttons)) buttons = [];
-  } catch(e) { buttons = []; }
+  } catch(e) { 
+    console.error("Failed to parse Quick Analysis Buttons:", e);
+    buttons = []; 
+  }
 
   containers.forEach(c => {
     if (buttons.length === 0) {
-      c.el.innerHTML = `<div class="empty-state" style="padding:5px; font-size:11px">No custom buttons defined. Add them in AI Settings.</div>`;
+      c.el.innerHTML = `<div class="empty-state" style="padding:10px; font-size:12px; color:var(--text-muted); text-align:center;">No custom analysis buttons defined.</div>`;
       return;
     }
 
@@ -2588,12 +2620,22 @@ function renderQuickAnalysisConfig(buttonsJson) {
 
   let buttons = [];
   try {
-    buttons = typeof buttonsJson === 'string' ? JSON.parse(buttonsJson) : buttonsJson;
+    if (buttonsJson) {
+      buttons = typeof buttonsJson === 'string' ? JSON.parse(buttonsJson) : buttonsJson;
+    }
     if (!Array.isArray(buttons)) buttons = [];
-  } catch(e) { buttons = []; }
+  } catch(e) { 
+    console.error("Failed to parse Quick Analysis Buttons Config:", e);
+    buttons = []; 
+  }
+
+  if (buttons.length === 0) {
+    container.innerHTML = `<div class="text-muted" style="padding:20px; text-align:center; font-style:italic;">No buttons defined. Click "Add New Button" to create one.</div>`;
+    return;
+  }
 
   container.innerHTML = buttons.map((b, idx) => `
-    <div class="card" style="padding:15px; border:1px solid var(--border); background:rgba(0,0,0,0.02)">
+    <div class="card qa-button-card" style="padding:15px; border:1px solid var(--border); background:rgba(0,0,0,0.02)">
       <div style="display:grid; grid-template-columns: 1fr 2fr auto; gap:10px; align-items:start">
         <div class="form-group">
           <label>Button Label</label>
@@ -2603,7 +2645,7 @@ function renderQuickAnalysisConfig(buttonsJson) {
           <label>AI Prompt</label>
           <textarea class="form-control qa-prompt" rows="2">${esc(b.prompt)}</textarea>
         </div>
-        <button class="btn btn-danger btn-sm" onclick="this.parentElement.parentElement.remove()" style="margin-top:22px">✕</button>
+        <button class="btn btn-danger btn-sm" onclick="this.closest('.qa-button-card').remove()" style="margin-top:22px" title="Delete Button">✕</button>
       </div>
     </div>
   `).join("");
@@ -2705,17 +2747,57 @@ Return only the final noting text without subject or sub-heading.`,
   }
 }
 
+const PROVIDER_MODELS = {
+  gemini: [
+    { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
+    { id: "gemini-2.0-pro-exp-02-05", label: "Gemini 2.0 Pro" },
+    { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
+    { id: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
+    { id: "gemma-3-27b-it", label: "Gemma 3 (27B)" },
+    { id: "gemma-4-preview", label: "Gemma 4 (Preview)" }
+  ],
+  groq: [
+    { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B" },
+    { id: "llama-3.1-70b-versatile", label: "Llama 3.1 70B" },
+    { id: "mixtral-8x7b-32768", label: "Mixtral 8x7B" },
+    { id: "gemma2-9b-it", label: "Gemma 2 9B" }
+  ]
+};
+
 function toggleLLMKeyGroups(provider) {
   const gemGroup = document.getElementById("gemini-key-group");
   const groqGroup = document.getElementById("groq-key-group");
+  const modelSelect = document.getElementById("llm-model");
+  const modelLabel = document.getElementById("model-select-label");
+
   if (!gemGroup || !groqGroup) return;
 
   if (provider === "groq") {
     gemGroup.style.display = "none";
     groqGroup.style.display = "block";
+    if (modelLabel) modelLabel.textContent = "Groq Model";
   } else {
     gemGroup.style.display = "block";
     groqGroup.style.display = "none";
+    if (modelLabel) modelLabel.textContent = "Gemini Model";
+  }
+
+  // Populate model dropdown
+  if (modelSelect) {
+    const currentVal = modelSelect.value;
+    modelSelect.innerHTML = "";
+    const models = PROVIDER_MODELS[provider] || [];
+    models.forEach(m => {
+      const opt = document.createElement("option");
+      opt.value = m.id;
+      opt.textContent = m.label;
+      modelSelect.appendChild(opt);
+    });
+    
+    // Attempt to restore previous value if it exists in the new list
+    if (currentVal && models.some(m => m.id === currentVal)) {
+      modelSelect.value = currentVal;
+    }
   }
 }
 
@@ -2751,9 +2833,11 @@ async function saveNetworkConfig() {
 async function saveLLMConfig() {
   const ctxInput = v("llm-context") || "8192";
 
-  const payload = {
+   const payload = {
     provider: v("llm-provider"),
-    gemini_model: v("llm-gemini-model"),
+    gemini_model: v("llm-provider") === "gemini" ? v("llm-model") : "",
+    groq_model: v("llm-provider") === "groq" ? v("llm-model") : "",
+    vision_model: v("llm-vision-model"),
     temperature: parseFloat(v("llm-temp")),
     context_length: parseInt(ctxInput),
     noting_master_prompt: v("llm-noting-master-prompt"),
@@ -2805,6 +2889,17 @@ async function saveLLMConfig() {
     el.innerHTML = `❌ Error: ${esc(res.error)}`;
     toast("Failed to save LLM settings", "error");
   }
+}
+
+/**
+ * Syncs the vision model selection between the Extraction page and AI Settings.
+ */
+function syncVisionModel(val) {
+  if (se("llm-vision-model")) se("llm-vision-model").value = val;
+  if (se("extract-vision-model")) se("extract-vision-model").value = val;
+  
+  // Auto-save the selection
+  saveLLMConfig();
 }
 
 async function testLLM() {
@@ -3973,11 +4068,20 @@ async function runTextExtraction(options = {}) {
 }
 
 async function pollExtractionStatus(jobId, statusEl, btn, label, onComplete) {
+  window._currentJobId = jobId;
+  showCancelButton(true);
+
   const interval = setInterval(async () => {
+    if (!window._currentJobId) {
+       clearInterval(interval);
+       return;
+    }
     try {
       const res = await apiFetch(`/api/extract/status/${jobId}`);
       if (res.status === "complete") {
         clearInterval(interval);
+        window._currentJobId = null;
+        showCancelButton(false);
         if (statusEl) {
           statusEl.className = "result-box success";
           statusEl.innerHTML = `✅ ${label} complete!`;
@@ -3986,26 +4090,44 @@ async function pollExtractionStatus(jobId, statusEl, btn, label, onComplete) {
         if (onComplete) onComplete(res.result);
       } else if (res.status === "failed") {
         clearInterval(interval);
+        window._currentJobId = null;
+        showCancelButton(false);
         if (statusEl) {
           statusEl.className = "result-box error";
-          statusEl.innerHTML = `❌ ${label} failed: ${esc(res.error)}`;
+          statusEl.innerHTML = `❌ ${label} Failed: ${esc(res.error)}`;
         }
         setExtractActionButtonsDisabled(false);
-      } else {
-        // Still running
-        if (statusEl) statusEl.innerHTML = `<span class="spinner"></span> ⚙️ ${label} in progress... please wait.`;
       }
-    } catch (e) {
+    } catch (err) {
       clearInterval(interval);
-      if (statusEl) statusEl.className = "result-box error";
-      // Safely stringify — e may be an Error object or raw value, not always a string
-      const errMsg = (e && e.message) ? String(e.message) : String(e);
-      if (statusEl) statusEl.innerHTML = `❌ Polling Error: ${esc(errMsg)}`;
-      setExtractActionButtonsDisabled(false);
+      window._currentJobId = null;
+      showCancelButton(false);
+      console.error("Polling error:", err);
     }
   }, 2000);
 }
 
+function showCancelButton(show) {
+  ["btn-cancel-extract", "btn-cancel-smart"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = show ? "inline-block" : "none";
+  });
+}
+
+function cancelExtractionJob() {
+  if (!window._currentJobId) return;
+  const jobId = window._currentJobId;
+  window._currentJobId = null;
+  showCancelButton(false);
+  setExtractActionButtonsDisabled(false);
+  const status = getExtractStatusEl();
+  if (status) {
+    status.className = "result-box warning";
+    status.innerHTML = `⚠️ Process cancelled by user.`;
+  }
+  apiFetch(`/api/extract/cancel/${jobId}`, "POST").catch(e => console.warn("Cancel API failed:", e));
+  toast("Process cancelled", "info");
+}
 /* ── Direct AI Analyze ─ sends file straight to LLM without OCR extraction ── */
 async function runDirectAnalyze() {
   const fileInput = document.getElementById('extract-file-input');
@@ -4253,6 +4375,12 @@ function previewExtractFile(e) {
     container.style.display = "block";
     img.src = "https://cdn-icons-png.flaticon.com/512/337/337946.png"; // PDF Icon
     filename.textContent = file.name;
+  }
+
+  if (window._extractOnlyFlag) {
+    window._extractOnlyFlag = false;
+    // Small delay to ensure preview is visible
+    setTimeout(() => runTextExtraction({ autoAnalyze: false }), 200);
   }
 }
 

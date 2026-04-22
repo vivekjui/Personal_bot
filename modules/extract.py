@@ -115,7 +115,10 @@ def extract_text_from_file(file_path: Path = None, image_bytes: bytes = None, me
 
             logger.info("Vision Method: Gemini LLM configured.")
             client = genai.Client(api_key=api_key)
-            model_name = CONFIG.get("llm", {}).get("gemini_model", "gemini-2.0-flash")
+            
+            # Use configured vision_model, fallback to gemini_model, then default
+            llm_cfg = CONFIG.get("llm", {})
+            model_name = llm_cfg.get("vision_model") or llm_cfg.get("gemini_model") or "gemini-2.0-flash"
             
             # Use utility normalization
             from modules.utils import _normalize_gemini_model_name

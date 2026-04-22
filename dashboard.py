@@ -122,6 +122,39 @@ _tec_extract_lock = threading.Lock()
 _extraction_jobs = {}
 _extraction_lock = threading.Lock()
 
+# Global set to track cancellation signals for various background tasks
+GLOBAL_STOP_SIGNALS = set()
+
+@app.route("/api/process/cancel", methods=["POST"])
+def api_process_cancel():
+    """Unified endpoint to cancel any long-running process."""
+    data = request.json or {}
+    job_id = data.get("job_id")
+    module = data.get("module") # e.g., 'extract', 'bid', 'tec'
+    
+    if not job_id:
+        return jsonify({"error": "Job ID required"}), 400
+        
+    GLOBAL_STOP_SIGNALS.add(job_id)
+    
+    # Bridge to specific module stop signals if they exist
+    try:
+        if module == "bid":
+            from modules.agent_bid_downloader import stop_agent_bid_job
+            stop_agent_bid_job(job_id)
+        elif module == "tec":
+            from modules.tec_eval import stop_tec_job
+            stop_tec_job(job_id)
+        elif module == "monitor":
+            from modules.gem_monitor import MONITOR_STOP_SIGNALS
+            MONITOR_STOP_SIGNALS.add(job_id)
+    except Exception as e:
+        logger.warning(f"Error bridging cancellation for {module}/{job_id}: {e}")
+
+    logger.info(f"Cancellation signal sent for job {job_id} (Module: {module})")
+    return jsonify({"success": True, "message": f"Cancellation signal sent for {job_id}."})
+
+
 def _fetch_remote_version(default_branch: str) -> str:
     from modules.utils import get_requests_proxies
     raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{default_branch}/dashboard.py"
@@ -1842,7 +1875,7 @@ def api_save_llm_config():
 
     llm_cfg = utils.CONFIG.setdefault("llm", {})
     config_changed = False
-    for key in ["provider", "gemini_model", "groq_model", "temperature", "context_length", "groq_api_key"]:
+    for key in ["provider", "gemini_model", "groq_model", "temperature", "context_length", "groq_api_key", "vision_model"]:
         if key in d:
             llm_cfg[key] = d[key]
             config_changed = True

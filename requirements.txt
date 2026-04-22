@@ -28,3 +28,5 @@ docling>=1.0.0
 crawl4ai>=0.3.0
 pydantic-ai>=0.0.14
 lightrag-hku>=1.0.0
+uvicorn
+python-dotenv

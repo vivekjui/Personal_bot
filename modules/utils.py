@@ -82,6 +82,8 @@ def _normalize_gemini_model_name(model_name: str) -> str:
     # Mapping for specific model identifiers
     mappings = {
         "gemma3-27b": "gemma-3-27b-it",
+        "gemma-3-27b-it": "gemma-3-27b-it",
+        "gemma-4-preview": "gemma-4-preview",
         "gemini-3.1-flash-lite": "gemini-2.0-flash", # Use 2.0-flash as stable fallback
         "gemini-1.5-flash": "gemini-1.5-flash",
         "gemini-1.5-flash-latest": "gemini-1.5-flash-latest",
@@ -129,8 +131,9 @@ def _default_config() -> dict:
             "provider": "gemma3_27b",
             "gemini_model": DEFAULT_GEMINI_MODEL,
             "temperature": 0.3,
-            "context_length": 8192,
+            "context_length": 32768,
             "timeout_seconds": 120,
+            "vision_model": "gemini-2.0-flash",
         },
         "rag": {
             "enabled": True,

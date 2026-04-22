@@ -11,8 +11,8 @@ import fitz  # PyMuPDF
 from pathlib import Path
 from modules.utils import logger, sanitize_filename
 
-MAX_SIZE_BYTES = 19.9 * 1024 * 1024  # 19.9 MB
-TARGET_MIN_SIZE = 19.5 * 1024 * 1024  # 19.5 MB
+MAX_SIZE_BYTES = 49.9 * 1024 * 1024  # 49.9 MB
+TARGET_MIN_SIZE = 49.5 * 1024 * 1024  # 49.5 MB
 
 def process_zip_bid(zip_path: Path, output_dir: Path) -> list:
     """

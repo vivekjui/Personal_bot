@@ -116,9 +116,11 @@ def main():
         height=850,
         min_size=(1000, 700)
     )
-    
+    def maximize(window):
+        window.maximize()
+
     # Start the webview loop (blocks the main thread)
-    webview.start()
+    webview.start(maximize, window)
 
 
 if __name__ == "__main__":
