@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.10] - 2026-04-22
+### Added
+- Keyboard Shortcut: `Alt + Left Arrow` to return to Dashboard from any module.
+### Fixed
+- AI Configuration Persistence: Refactored database seeding to ensure default prompts are restored if corrupted.
+- UI Stabilization: Removed initialization blockers in `app.js` ensuring AI prompts and custom buttons always load regardless of view.
+- JSON Robustness: Improved handling of malformed JSON strings in quick analysis button rendering.
+
 ## [3.1.2] - 2026-04-17
 ### Added
 - Direct file upload support in AI Analysis section for instant summarization.
